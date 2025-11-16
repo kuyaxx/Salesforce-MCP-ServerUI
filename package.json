@@ -1,0 +1,53 @@
+{
+    "name": "@tsmztech/mcp-server-salesforce",
+    "version": "0.0.6",
+    "description": "A Salesforce connector MCP Server.",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "bin": {
+      "salesforce-connector": "dist/index.js"
+    },
+    "files": [
+      "dist"
+    ],
+    "scripts": {
+      "build": "tsc && shx chmod +x dist/*.js",
+      "prepare": "npm run build",
+      "watch": "tsc --watch",
+      "test": "node --test"
+    },
+    "keywords": [
+      "mcp",
+      "salesforce",
+      "claude",
+      "ai"
+    ],
+    "author": "tsmztech",
+    "license": "MIT",
+    "dependencies": {
+      "@modelcontextprotocol/sdk": "1.21.1",
+      "dotenv": "16.4.7",
+      "jsforce": "^3.10.3",
+      "@mcp-ui/server": "^5.11.0",
+      "fastmcp": "^3.19.1",
+      "node-fetch": "^3.3.2",
+      "zod": "^3.24.4"
+    },
+    "devDependencies": {
+      "@types/node": "^24.3.0",
+      "shx": "^0.4.0",
+      "@eslint/js": "^9.26.0",
+      "@tsconfig/node22": "^22.0.1",
+      "eslint-config-prettier": "^10.1.3",
+      "eslint-plugin-perfectionist": "^4.12.3",
+      "jiti": "^2.4.2",
+      "prettier": "^3.5.3",
+      "semantic-release": "^24.2.3",
+      "tsx": "^4.19.4",
+      "typescript": "^5.8.3",
+      "typescript-eslint": "^8.32.0",
+      "vitest": "^3.1.3"
+    }
+  }
+  
