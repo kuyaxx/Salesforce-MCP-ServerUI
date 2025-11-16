@@ -325,6 +325,8 @@ function recordsTableHtml(records: Object[], objectType: string) {
 
   const tableRows = records
     .map((record, index) => {
+      const actionCell = `<td class="action-cell"><button class="edit-btn" onclick="event.stopPropagation(); editRecord(${index})" title="Edit Record">Edit</button></td>`;
+
       const cells = fields.map(field => {
         const value = record[field] || "";
         const displayValue = ((field: string, val: string) => {
@@ -353,13 +355,14 @@ function recordsTableHtml(records: Object[], objectType: string) {
         .replace(/<\/script>/gi, "<\\/script>")
         .replace(/<!--/g, "<\\!--");
 
-      return `<tr class="record-row" onclick="editRecord(${index})" data-record='${recordJson}'>${cells}</tr>`;
+      return `<tr class="record-row" onclick="editRecord(${index})" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
     })
     .join("\n");
 
-  const tableHeaders = fields
-    .map(field => `<th class="header-cell">${esc(field)}</th>`)
-    .join("");
+  const tableHeaders = [
+    '<th class="header-cell">Actions</th>',
+    ...fields.map(field => `<th class="header-cell">${esc(field)}</th>`)
+  ].join("");
 
   // Safely inject all records for the script
   const recordsJson = JSON.stringify(records)
@@ -388,6 +391,10 @@ function recordsTableHtml(records: Object[], objectType: string) {
     .record-row:first-child{border-bottom:1px solid #e5e7eb}
     .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
+    .action-cell{text-align:center;width:80px}
+    .edit-btn{background:#111;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color 0.15s}
+    .edit-btn:hover{background:#333}
+    .edit-btn:active{background:#000}
     .no-records{text-align:center;padding:40px;color:#6b7280}
   </style>
 </head>
@@ -421,23 +428,29 @@ function recordsTableHtml(records: Object[], objectType: string) {
     function editRecord(recordIndex) {
       const record = allRecords[recordIndex];
       if (record) {
-        // Build text format for the edit tool
-        let textContent = record.Name || "${objectType}";
-
-        for (const [key, value] of Object.entries(record)) {
-          if (key !== "Name") {
-            textContent += "\\n* " + key + ": " + value;
-          }
-        }
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (record.Name || "record") + " record in the UI form:";
 
         parent.postMessage({
-          type: "action",
+          type: "prompt",
           payload: {
-            action: "edit_record",
-            params: { text: textContent }
+            prompt,
+            params: { text: formatRecordForEdit(record) }
           }
         }, "*");
       }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
     }
   </script>
 </body>
@@ -525,6 +538,7 @@ export const VIEW_RECORDS_TABLE: Tool = {
 
 ACTIVATE THIS TOOL when users say things like:
 • "Show me all records"
+• "Show me top 5 open opportunities by amount"
 • "View [records] in a table/list"
 • "List all [records] with edit option"
 • "Display [records] for selection/editing"
@@ -532,12 +546,13 @@ ACTIVATE THIS TOOL when users say things like:
 
 The tool provides an interactive table with:
 • All records displayed in rows and columns
-• Clickable rows to launch edit mode for individual records
+• Action button in the first column to edit each individual record
+• Clickable rows to launch edit mode for individual records (maintaining backward compatibility)
 • Consistent styling with edit forms
 • Smart field formatting (dates, percentages, etc.)
 • Responsive design for different screen sizes
 
-Example usage: When a user wants to see a list of contacts or accounts and be able to edit specific ones, this tool displays them in an interactive table where clicking any row opens the edit form.`,
+Example usage: When a user wants to see a list of contacts or accounts and be able to edit specific ones, this tool displays them in an interactive table where clicking the "Edit" button in the first column opens the edit form.`,
   inputSchema: {
     type: "object",
     properties: {
