@@ -607,3 +607,318 @@ export async function handleDisplayRecordsTable(conn: any, args: { records: stri
     };
   }
 }
+
+/* --------------------------------------------------------------
+   8. Record Detail Card (Read-only)
+   -------------------------------------------------------------- */
+export interface ViewRecordDetailArgs {
+  text: string;
+}
+
+interface RecordSection {
+  header: string;
+  fields: Record<string, string>;
+}
+
+/* --------------------------------------------------------------
+   8a. Parse Record Detail Text with Sections
+   -------------------------------------------------------------- */
+function parseRecordDetailText(raw: string): { recordName: string; sections: RecordSection[]; description?: string } {
+  const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  if (lines.length === 0) {
+    throw new Error("No content provided");
+  }
+
+  // Extract record name (first line, can contain parenthetical notes)
+  let recordName = lines[0].replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+  const sections: RecordSection[] = [];
+  let currentSection: RecordSection | null = null;
+  let description: string | undefined;
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check if this is a section header (ends with colon and might contain parenthetical notes)
+    if (line.endsWith(':') && !line.startsWith('*')) {
+      // Extract clean section header
+      const header = line.replace(/:\s*$/, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+      // Save previous section if exists
+      if (currentSection) {
+        sections.push(currentSection);
+      }
+
+      // Start new section
+      currentSection = {
+        header,
+        fields: {}
+      };
+    } else if (currentSection && line.startsWith('*')) {
+      // This is a field in the current section
+      const m = line.match(/^\*\s*([^:]+):\s*(.+)$/);
+      if (m) {
+        const fieldName = m[1].trim();
+        const fieldValue = m[2].trim();
+        currentSection.fields[fieldName] = fieldValue;
+      }
+    } else if (!currentSection && !line.startsWith('*') && line.length > 50) {
+      // This might be a description (long text without asterisk or colon)
+      description = line;
+    }
+  }
+
+  // Add the last section
+  if (currentSection) {
+    sections.push(currentSection);
+  }
+
+  return {
+    recordName,
+    sections,
+    description
+  };
+}
+
+/* --------------------------------------------------------------
+   8b. Generate Record Detail Card HTML
+   -------------------------------------------------------------- */
+function recordDetailCardHtml(recordName: string, sections: RecordSection[], description?: string) {
+  const esc = (s: string) => {
+    return s.replace(/&/g, '&')
+            .replace(/</g, '<')
+            .replace(/"/g, '"');
+  };
+
+  // Generate sections HTML
+  const sectionsHtml = sections.map(section => {
+    const fieldsHtml = Object.entries(section.fields)
+      .map(([fieldName, fieldValue]) => {
+        const displayValue = esc(fieldValue);
+
+        // Special formatting for different field types
+        const isWebsite = fieldName.toLowerCase().includes('website') && displayValue.startsWith('http');
+        const isEmail = fieldName.toLowerCase().includes('email') && displayValue.includes('@');
+        const isPhone = fieldName.toLowerCase().includes('phone');
+        const isId = fieldName.toLowerCase().includes('id') && /^[a-zA-Z0-9]{15,18}$/.test(displayValue);
+
+        let formattedValue = displayValue;
+
+        if (isWebsite) {
+          formattedValue = `<a href="${displayValue}" target="_blank" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+        } else if (isEmail) {
+          formattedValue = `<a href="mailto:${displayValue}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+        } else if (isPhone) {
+          formattedValue = `<a href="tel:${displayValue.replace(/[^\d+()-\s]/g, '')}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+        } else if (isId) {
+          formattedValue = `<code style="font-family:monospace;background:#f3f4f6;padding:2px 4px;border-radius:3px;font-size:13px;">${displayValue}</code>`;
+        }
+
+        return `
+          <div class="row">
+            <div class="label">${esc(fieldName)}</div>
+            <div class="value">${formattedValue}</div>
+          </div>`;
+      })
+      .join('');
+
+    return `
+      <div class="section">
+        <div class="section-header">${esc(section.header)}</div>
+        ${fieldsHtml}
+      </div>`;
+  }).join('');
+
+  // Description section if present
+  const descriptionHtml = description ? `
+    <div class="section">
+      <div class="section-header">Description</div>
+      <div class="description">${esc(description)}</div>
+    </div>` : '';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(recordName)}</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8f9fc;
+    }
+    .wrap {
+      max-width: 420px;
+      margin: 0 auto;
+      padding: 20px 16px;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+      border: 1px solid #e5e7eb;
+    }
+    .header {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .title {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0 0 8px 0;
+      line-height: 1.2;
+    }
+    .section {
+      padding: 20px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .section:last-child {
+      border-bottom: none;
+    }
+    .section-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .description {
+      font-size: 15px;
+      color: #4b5563;
+      line-height: 1.5;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+      gap: 16px;
+    }
+    .row:last-child {
+      margin-bottom: 0;
+    }
+    .label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      min-width: 100px;
+      flex-shrink: 0;
+    }
+    .value {
+      font-size: 15px;
+      color: #1f2937;
+      font-weight: 500;
+      flex: 1;
+      text-align: right;
+      word-break: break-word;
+    }
+    .progress {
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .fill {
+      height: 100%;
+      width: 70%;
+      background: #10b981;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+    <div class="header">
+      <h1 class="title">${esc(recordName)}</h1>
+    </div>
+    ${sectionsHtml}
+    ${descriptionHtml}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+/* --------------------------------------------------------------
+   8c. Record Detail Tool Definition
+   -------------------------------------------------------------- */
+export const VIEW_RECORD_DETAIL: Tool = {
+  name: "salesforce_view_record_detail",
+  description: `Display a single Salesforce record in a detailed, read-only card format. Use this tool when you want to view comprehensive record information in an attractive, organized layout with sections and proper formatting.
+
+ACTIVATE THIS TOOL when users say things like:
+• "Show me the details of this record"
+• "Display [record] in detail/card format"
+• "View [record] information comprehensively"
+• "Show full record details"
+• "Display record in card view"
+
+The tool provides a beautifully formatted card with:
+• Record name prominently displayed in the header
+• Information organized into logical sections (e.g., Basic Information, Location & Contact, etc.)
+• Smart formatting for different field types (IDs, websites, emails, phone numbers)
+• Clean, modern card design with gradient header
+• Responsive layout
+• Hyperlinked clickable fields where appropriate
+
+Example usage: When a user wants to see detailed information about an account or contact with all fields properly organized and formatted.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "Text representation of the record details to display, formatted with: 'Record Name\\nSection Header:\\n* Field: value\\n* Field: value\\n...' with sections containing field information"
+      }
+    },
+    required: ["text"]
+  }
+};
+
+/* --------------------------------------------------------------
+   8d. Handler Function for Record Detail Card
+   -------------------------------------------------------------- */
+export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailArgs) {
+  const { text } = args;
+
+  try {
+    const { recordName, sections, description } = parseRecordDetailText(text);
+
+    const summary = `Displaying detailed view for: ${recordName}`;
+
+    const recordId = recordName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+
+    return {
+      content: [
+        { type: "text", text: summary },
+        createUIResource({
+          uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
+          content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, description) },
+          encoding: "text",
+        }),
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{
+        type: "text",
+        text: `Error parsing record detail text: ${errorMessage}\n\nExpected format:\n\`\`\`\nRecord Name (additional notes)\nSection Header: (additional notes)\n* Field Name: field value\n* Another Field: another value\nAnother Section:\n* Field: value\nDescription text (optional)\n\`\`\``
+      }],
+      isError: true,
+    };
+  }
+}

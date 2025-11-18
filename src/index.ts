@@ -24,7 +24,7 @@ import { READ_APEX_TRIGGER, handleReadApexTrigger, ReadApexTriggerArgs } from ".
 import { WRITE_APEX_TRIGGER, handleWriteApexTrigger, WriteApexTriggerArgs } from "./tools/writeApexTrigger.js";
 import { EXECUTE_ANONYMOUS, handleExecuteAnonymous, ExecuteAnonymousArgs } from "./tools/executeAnonymous.js";
 import { MANAGE_DEBUG_LOGS, handleManageDebugLogs, ManageDebugLogsArgs } from "./tools/manageDebugLogs.js";
-import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable } from "./tools/ui.js";
+import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable, VIEW_RECORD_DETAIL, handleViewRecordDetail, ViewRecordDetailArgs } from "./tools/ui.js";
 
 // Load environment variables (using dotenv 16.x which has no stdout tips)
 // MCP servers require stdout to contain ONLY JSON-RPC messages
@@ -61,7 +61,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     EXECUTE_ANONYMOUS,
     MANAGE_DEBUG_LOGS,
     EDIT_SINGLE_RECORD,
-    VIEW_RECORDS_TABLE
+    VIEW_RECORDS_TABLE,
+    VIEW_RECORD_DETAIL
   ],
 }));
 
@@ -350,6 +351,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         return await handleDisplayRecordsTable(conn, validatedArgs);
+      }
+
+      case "salesforce_view_record_detail": {
+        const detailArgs = args as Record<string, unknown>;
+        if (!detailArgs.text) {
+          throw new Error('text is required for viewing record detail');
+        }
+
+        // Type check and conversion
+        const validatedArgs: ViewRecordDetailArgs = {
+          text: detailArgs.text as string
+        };
+
+        return await handleViewRecordDetail(conn, validatedArgs);
       }
 
       default:
