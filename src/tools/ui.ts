@@ -305,6 +305,18 @@ function recordsTableHtml(records: Object[], objectType: string) {
       </div>
     </div>
   </div>
+  <script>
+    // Resize observer
+    const observer = new ResizeObserver(es => {
+      for (const e of es) {
+        parent.postMessage(
+          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+          "*"
+        );
+      }
+    });
+    observer.observe(document.documentElement);
+  </script>
 </body>
 </html>`;
   }
@@ -745,25 +757,9 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(recordName)}</title>
   <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f8f9fc;
-    }
-    .wrap {
-      max-width: 420px;
-      margin: 0 auto;
-      padding: 20px 16px;
-    }
-    .card {
-      width: 100%;
-      max-width: 420px;
-      background: white;
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.08);
-      border: 1px solid #e5e7eb;
-    }
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+    .wrap{max-width:720px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
     .header {
       background: linear-gradient(135deg, #6366f1, #8b5cf6);
       color: white;
@@ -849,6 +845,18 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
     ${descriptionHtml}
     </div>
   </div>
+  <script>
+    // Resize observer
+    const observer = new ResizeObserver(es => {
+      for (const e of es) {
+        parent.postMessage(
+          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+          "*"
+        );
+      }
+    });
+    observer.observe(document.documentElement);
+  </script>
 </body>
 </html>`;
 }
