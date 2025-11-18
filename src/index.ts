@@ -24,7 +24,7 @@ import { READ_APEX_TRIGGER, handleReadApexTrigger, ReadApexTriggerArgs } from ".
 import { WRITE_APEX_TRIGGER, handleWriteApexTrigger, WriteApexTriggerArgs } from "./tools/writeApexTrigger.js";
 import { EXECUTE_ANONYMOUS, handleExecuteAnonymous, ExecuteAnonymousArgs } from "./tools/executeAnonymous.js";
 import { MANAGE_DEBUG_LOGS, handleManageDebugLogs, ManageDebugLogsArgs } from "./tools/manageDebugLogs.js";
-import { EDIT_SINGLE_RECORD, handleDisplaySingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable } from "./tools/ui.js";
+import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable } from "./tools/ui.js";
 
 // Load environment variables (using dotenv 16.x which has no stdout tips)
 // MCP servers require stdout to contain ONLY JSON-RPC messages
@@ -334,7 +334,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text: editArgs.text as string
         };
 
-        return await handleDisplaySingleRecord(conn, validatedArgs);
+        return await handleEditSingleRecord(conn, validatedArgs);
       }
 
       case "salesforce_view_records_table": {

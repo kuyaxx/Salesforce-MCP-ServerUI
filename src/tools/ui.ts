@@ -494,7 +494,7 @@ Example usage: When a user wants to edit a contact's information, this tool open
 /* --------------------------------------------------------------
    5. Handler Function (following MCP server pattern)
    -------------------------------------------------------------- */
-export async function handleDisplaySingleRecord(conn: any, args: EditRecordArgs) {
+export async function handleEditSingleRecord(conn: any, args: EditRecordArgs) {
   const { text } = args;
 
   try {
