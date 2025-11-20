@@ -14,16 +14,8 @@ import { DESCRIBE_OBJECT, handleDescribeObject } from "./tools/describe.js";
 import { QUERY_RECORDS, handleQueryRecords, QueryArgs } from "./tools/query.js";
 import { AGGREGATE_QUERY, handleAggregateQuery, AggregateQueryArgs } from "./tools/aggregateQuery.js";
 import { DML_RECORDS, handleDMLRecords, DMLArgs } from "./tools/dml.js";
-import { MANAGE_OBJECT, handleManageObject, ManageObjectArgs } from "./tools/manageObject.js";
 import { MANAGE_FIELD, handleManageField, ManageFieldArgs } from "./tools/manageField.js";
-import { MANAGE_FIELD_PERMISSIONS, handleManageFieldPermissions, ManageFieldPermissionsArgs } from "./tools/manageFieldPermissions.js";
 import { SEARCH_ALL, handleSearchAll, SearchAllArgs, WithClause } from "./tools/searchAll.js";
-import { READ_APEX, handleReadApex, ReadApexArgs } from "./tools/readApex.js";
-import { WRITE_APEX, handleWriteApex, WriteApexArgs } from "./tools/writeApex.js";
-import { READ_APEX_TRIGGER, handleReadApexTrigger, ReadApexTriggerArgs } from "./tools/readApexTrigger.js";
-import { WRITE_APEX_TRIGGER, handleWriteApexTrigger, WriteApexTriggerArgs } from "./tools/writeApexTrigger.js";
-import { EXECUTE_ANONYMOUS, handleExecuteAnonymous, ExecuteAnonymousArgs } from "./tools/executeAnonymous.js";
-import { MANAGE_DEBUG_LOGS, handleManageDebugLogs, ManageDebugLogsArgs } from "./tools/manageDebugLogs.js";
 import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable, VIEW_RECORD_DETAIL, handleViewRecordDetail, ViewRecordDetailArgs } from "./tools/ui.js";
 
 // Load environment variables (using dotenv 16.x which has no stdout tips)
@@ -50,16 +42,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     QUERY_RECORDS,
     AGGREGATE_QUERY,
     DML_RECORDS,
-    MANAGE_OBJECT,
     MANAGE_FIELD,
-    MANAGE_FIELD_PERMISSIONS,
     SEARCH_ALL,
-    READ_APEX,
-    WRITE_APEX,
-    READ_APEX_TRIGGER,
-    WRITE_APEX_TRIGGER,
-    EXECUTE_ANONYMOUS,
-    MANAGE_DEBUG_LOGS,
     EDIT_SINGLE_RECORD,
     VIEW_RECORDS_TABLE,
     VIEW_RECORD_DETAIL
@@ -134,25 +118,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDMLRecords(conn, validatedArgs);
       }
 
-      case "salesforce_manage_object": {
-        const objectArgs = args as Record<string, unknown>;
-        if (!objectArgs.operation || !objectArgs.objectName) {
-          throw new Error('operation and objectName are required for object management');
-        }
-        const validatedArgs: ManageObjectArgs = {
-          operation: objectArgs.operation as 'create' | 'update',
-          objectName: objectArgs.objectName as string,
-          label: objectArgs.label as string | undefined,
-          pluralLabel: objectArgs.pluralLabel as string | undefined,
-          description: objectArgs.description as string | undefined,
-          nameFieldLabel: objectArgs.nameFieldLabel as string | undefined,
-          nameFieldType: objectArgs.nameFieldType as 'Text' | 'AutoNumber' | undefined,
-          nameFieldFormat: objectArgs.nameFieldFormat as string | undefined,
-          sharingModel: objectArgs.sharingModel as 'ReadWrite' | 'Read' | 'Private' | 'ControlledByParent' | undefined
-        };
-        return await handleManageObject(conn, validatedArgs);
-      }
-
       case "salesforce_manage_field": {
         const fieldArgs = args as Record<string, unknown>;
         if (!fieldArgs.operation || !fieldArgs.objectName || !fieldArgs.fieldName) {
@@ -179,22 +144,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           grantAccessTo: fieldArgs.grantAccessTo as string[] | undefined
         };
         return await handleManageField(conn, validatedArgs);
-      }
-
-      case "salesforce_manage_field_permissions": {
-        const permArgs = args as Record<string, unknown>;
-        if (!permArgs.operation || !permArgs.objectName || !permArgs.fieldName) {
-          throw new Error('operation, objectName, and fieldName are required for field permissions management');
-        }
-        const validatedArgs: ManageFieldPermissionsArgs = {
-          operation: permArgs.operation as 'grant' | 'revoke' | 'view',
-          objectName: permArgs.objectName as string,
-          fieldName: permArgs.fieldName as string,
-          profileNames: permArgs.profileNames as string[] | undefined,
-          readable: permArgs.readable as boolean | undefined,
-          editable: permArgs.editable as boolean | undefined
-        };
-        return await handleManageFieldPermissions(conn, validatedArgs);
       }
 
       case "salesforce_search_all": {
@@ -226,102 +175,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
 
         return await handleSearchAll(conn, validatedArgs);
-      }
-
-      case "salesforce_read_apex": {
-        const apexArgs = args as Record<string, unknown>;
-        
-        // Type check and conversion
-        const validatedArgs: ReadApexArgs = {
-          className: apexArgs.className as string | undefined,
-          namePattern: apexArgs.namePattern as string | undefined,
-          includeMetadata: apexArgs.includeMetadata as boolean | undefined
-        };
-
-        return await handleReadApex(conn, validatedArgs);
-      }
-
-      case "salesforce_write_apex": {
-        const apexArgs = args as Record<string, unknown>;
-        if (!apexArgs.operation || !apexArgs.className || !apexArgs.body) {
-          throw new Error('operation, className, and body are required for writing Apex');
-        }
-        
-        // Type check and conversion
-        const validatedArgs: WriteApexArgs = {
-          operation: apexArgs.operation as 'create' | 'update',
-          className: apexArgs.className as string,
-          apiVersion: apexArgs.apiVersion as string | undefined,
-          body: apexArgs.body as string
-        };
-
-        return await handleWriteApex(conn, validatedArgs);
-      }
-
-      case "salesforce_read_apex_trigger": {
-        const triggerArgs = args as Record<string, unknown>;
-        
-        // Type check and conversion
-        const validatedArgs: ReadApexTriggerArgs = {
-          triggerName: triggerArgs.triggerName as string | undefined,
-          namePattern: triggerArgs.namePattern as string | undefined,
-          includeMetadata: triggerArgs.includeMetadata as boolean | undefined
-        };
-
-        return await handleReadApexTrigger(conn, validatedArgs);
-      }
-
-      case "salesforce_write_apex_trigger": {
-        const triggerArgs = args as Record<string, unknown>;
-        if (!triggerArgs.operation || !triggerArgs.triggerName || !triggerArgs.body) {
-          throw new Error('operation, triggerName, and body are required for writing Apex trigger');
-        }
-        
-        // Type check and conversion
-        const validatedArgs: WriteApexTriggerArgs = {
-          operation: triggerArgs.operation as 'create' | 'update',
-          triggerName: triggerArgs.triggerName as string,
-          objectName: triggerArgs.objectName as string | undefined,
-          apiVersion: triggerArgs.apiVersion as string | undefined,
-          body: triggerArgs.body as string
-        };
-
-        return await handleWriteApexTrigger(conn, validatedArgs);
-      }
-
-      case "salesforce_execute_anonymous": {
-        const executeArgs = args as Record<string, unknown>;
-        if (!executeArgs.apexCode) {
-          throw new Error('apexCode is required for executing anonymous Apex');
-        }
-        
-        // Type check and conversion
-        const validatedArgs: ExecuteAnonymousArgs = {
-          apexCode: executeArgs.apexCode as string,
-          logLevel: executeArgs.logLevel as 'NONE' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'FINE' | 'FINER' | 'FINEST' | undefined
-        };
-
-        return await handleExecuteAnonymous(conn, validatedArgs);
-      }
-
-      case "salesforce_manage_debug_logs": {
-        const debugLogsArgs = args as Record<string, unknown>;
-        if (!debugLogsArgs.operation || !debugLogsArgs.username) {
-          throw new Error('operation and username are required for managing debug logs');
-        }
-
-        // Type check and conversion
-        const validatedArgs: ManageDebugLogsArgs = {
-          operation: debugLogsArgs.operation as 'enable' | 'disable' | 'retrieve',
-          username: debugLogsArgs.username as string,
-          logLevel: debugLogsArgs.logLevel as 'NONE' | 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'FINE' | 'FINER' | 'FINEST' | undefined,
-          expirationTime: debugLogsArgs.expirationTime as number | undefined,
-          limit: debugLogsArgs.limit as number | undefined,
-          logId: debugLogsArgs.logId as string | undefined,
-          includeBody: debugLogsArgs.includeBody as boolean | undefined
-        };
-
-        return await handleManageDebugLogs(conn, validatedArgs);
       }
 
       case "salesforce_edit_record": {

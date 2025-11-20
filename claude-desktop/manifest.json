@@ -4,7 +4,7 @@
   "display_name": "Salesforce MCP Server",
   "version": "1.0.0",
   "description": "Integrate Claude with Salesforce for natural language interactions with your Salesforce data and metadata",
-  "long_description": "A comprehensive MCP server that enables Claude to query, modify, and manage your Salesforce objects and records using everyday language. Features include object and field management, smart object search, data queries with relationship support, Apex code management, debug log management, and field-level security controls.",
+  "long_description": "A comprehensive MCP server that enables Claude to query, modify, and manage your Salesforce objects and records using everyday language. Features include object and field management, smart object search, data queries with relationship support, and field-level security controls.",
   "author": {
     "name": "TSMZ Tech",
     "url": "https://github.com/tsmztech"
@@ -57,44 +57,12 @@
       "description": "Perform data operations: insert, update, delete, and upsert records using external IDs"
     },
     {
-      "name": "salesforce_manage_object",
-      "description": "Create new custom objects or update existing object properties and sharing settings"
-    },
-    {
       "name": "salesforce_manage_field",
       "description": "Create new custom fields or update existing field properties with automatic Field Level Security management"
     },
     {
-      "name": "salesforce_manage_field_permissions",
-      "description": "Grant, revoke, or view field-level security permissions for specific profiles"
-    },
-    {
       "name": "salesforce_search_all",
       "description": "Search across multiple Salesforce objects simultaneously using SOSL with field snippets and filtering"
-    },
-    {
-      "name": "salesforce_read_apex",
-      "description": "Read Apex class source code and metadata, with support for wildcards and name pattern matching"
-    },
-    {
-      "name": "salesforce_write_apex",
-      "description": "Create new Apex classes or update existing class implementations with API version control"
-    },
-    {
-      "name": "salesforce_read_apex_trigger",
-      "description": "Read Apex trigger source code and metadata, with support for wildcards and name pattern matching"
-    },
-    {
-      "name": "salesforce_write_apex_trigger",
-      "description": "Create new Apex triggers or update existing trigger implementations for specific objects and events"
-    },
-    {
-      "name": "salesforce_execute_anonymous",
-      "description": "Execute anonymous Apex code without creating a permanent class, with debug log support"
-    },
-    {
-      "name": "salesforce_manage_debug_logs",
-      "description": "Enable, disable, or retrieve debug logs for Salesforce users with configurable log levels"
     }
   ],
   "prompts": [
