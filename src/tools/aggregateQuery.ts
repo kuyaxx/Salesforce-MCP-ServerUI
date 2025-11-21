@@ -1,6 +1,5 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { createUIResource } from "@mcp-ui/server";
-import { readOnlyTableHtml, UIRecord } from "./ui.js";
+import { convertRecordsToUI } from "./ui.js";
 
 
 export const AGGREGATE_QUERY: Tool = {
@@ -230,42 +229,8 @@ export async function handleAggregateQuery(conn: any, args: AggregateQueryArgs) 
 
     const result = await conn.query(soql);
 
-    // Convert records to UIRecord format (string values)
-    const uiRecords: UIRecord[] = result.records.map((r: any) => {
-      const rec: UIRecord = {};
-      for (const [k, v] of Object.entries(r)) {
-        if (k === 'attributes') continue;
-        if (v === null || v === undefined) {
-          rec[k] = '';
-        } else if (typeof v === 'object') {
-          // If it has a Name, use it (common for parent relationships)
-          if ('Name' in (v as any)) {
-            rec[k] = (v as any).Name;
-          } else {
-            rec[k] = JSON.stringify(v);
-          }
-        } else {
-          rec[k] = String(v);
-        }
-      }
-      return rec;
-    });
-
-    const recordCount = uiRecords.length;
-    const summary = `Found ${recordCount} aggregate result${recordCount === 1 ? '' : 's'}`;
-    const content: any[] = [{ type: "text", text: summary }];
-
-    // Add UI table for aggregate results
-    if (recordCount > 0) {
-      const queryTitle = `${objectName} Aggregate Results`;
-      const resultsId = `aggregate_${Date.now()}`;
-
-      content.push(createUIResource({
-        uri: `ui://aggregate/results/${encodeURIComponent(objectName)}/${resultsId}`,
-        content: { type: "rawHtml", htmlString: readOnlyTableHtml(uiRecords, queryTitle) },
-        encoding: "text",
-      }));
-    }
+    // Use the UI helper to convert records and generate UI resources (read-only for aggregates)
+    const content = convertRecordsToUI(result.records, objectName, true);
 
     return {
       content,

@@ -1189,3 +1189,80 @@ export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailAr
     };
   }
 }
+
+/* --------------------------------------------------------------
+   9. Convert Salesforce Records to UI Format
+   -------------------------------------------------------------- */
+/**
+ * Converts Salesforce query result records to UIRecord format and generates
+ * appropriate UI resources (detail card for single record, table for multiple).
+ * 
+ * @param records - Raw Salesforce records from query result
+ * @param objectName - The Salesforce object type (e.g., 'Account', 'Contact')
+ * @param readOnly - If true, generates a read-only table without edit buttons (for aggregate queries)
+ * @returns Array of content items including JSON data and UI resources
+ */
+export function convertRecordsToUI(records: any[], objectName: string, readOnly: boolean = false): any[] {
+  // Convert records to UIRecord format (string values)
+  const uiRecords: UIRecord[] = records.map((r: any) => {
+    const rec: UIRecord = {};
+    for (const [k, v] of Object.entries(r)) {
+      if (k === 'attributes') continue;
+      if (v === null || v === undefined) {
+        rec[k] = '';
+      } else if (typeof v === 'object') {
+        // If it has a Name, use it (common for parent relationships)
+        if ('Name' in (v as any)) {
+          rec[k] = (v as any).Name;
+        } else {
+          rec[k] = JSON.stringify(v);
+        }
+      } else {
+        rec[k] = String(v);
+      }
+    }
+    return rec;
+  });
+
+  const recordCount = uiRecords.length;
+  const content: any[] = [{ type: "text", text: JSON.stringify(records, null, 2) }];
+
+  if (recordCount === 1 && !readOnly) {
+    const record = uiRecords[0];
+    const recordName = record.Name || record.Id || "Record";
+    const recordId = record.Id || "unknown";
+
+    const sections: RecordSection[] = [{
+      header: "Details",
+      fields: record
+    }];
+
+    content.push(createUIResource({
+      uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
+      content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, record) },
+      encoding: "text",
+    }));
+  } else if (recordCount > 1 || (recordCount === 1 && readOnly)) {
+    const objectType = objectName;
+    const recordsId = uiRecords[0]?.Id || "table";
+
+    if (readOnly) {
+      // Use read-only table for aggregate queries
+      const queryTitle = `${objectName} Results`;
+      content.push(createUIResource({
+        uri: `ui://records/readonly/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+        content: { type: "rawHtml", htmlString: readOnlyTableHtml(uiRecords, queryTitle) },
+        encoding: "text",
+      }));
+    } else {
+      // Use editable table for regular queries
+      content.push(createUIResource({
+        uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+        content: { type: "rawHtml", htmlString: recordsTableHtml(uiRecords, objectType) },
+        encoding: "text",
+      }));
+    }
+  }
+
+  return content;
+}
