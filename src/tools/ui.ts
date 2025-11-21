@@ -26,6 +26,36 @@ const REQUIRED_FIELDS = [
    1. Parse → de-duplicate + keep original casing
    -------------------------------------------------------------- */
 function parseObjectText(raw: string): Object {
+  try {
+    // Try parsing as JSON first
+    const parsed = JSON.parse(raw);
+
+    // Handle array input (take first item)
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) throw new Error("Empty array provided");
+      return parsed[0];
+    }
+
+    // Handle single object
+    if (typeof parsed === 'object' && parsed !== null) {
+      // Convert all values to strings to match Object type definition
+      const sanitized: Object = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (value === null || value === undefined) {
+          sanitized[key] = '';
+        } else if (typeof value === 'object') {
+          sanitized[key] = JSON.stringify(value);
+        } else {
+          sanitized[key] = String(value);
+        }
+      }
+      return sanitized;
+    }
+  } catch (e) {
+    // Fallback to text parsing if JSON parse fails
+    // This maintains backward compatibility for text-based inputs
+  }
+
   const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const nameLine = lines.find(l => !l.startsWith("*"));
   if (!nameLine) throw new Error("Missing object name (first non-bullet line).");
@@ -90,8 +120,8 @@ function isIsoDate(value: string): boolean {
 function objectCardHtml(obj: Object) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
-            .replace(/</g, '<')
-            .replace(/"/g, '"');
+      .replace(/</g, '<')
+      .replace(/"/g, '"');
   };
 
   const sortedKeys = Object.keys(obj).sort((a, b) => {
@@ -275,8 +305,8 @@ function objectCardHtml(obj: Object) {
 function recordsTableHtml(records: Object[], objectType: string) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
-            .replace(/</g, '<')
-            .replace(/"/g, '"');
+      .replace(/</g, '<')
+      .replace(/"/g, '"');
   };
 
   if (records.length === 0) {
@@ -356,6 +386,22 @@ function recordsTableHtml(records: Object[], objectType: string) {
             return val;
           }
 
+          // Try to parse JSON if it looks like an object
+          if (val.trim().startsWith("{") && val.trim().endsWith("}")) {
+            try {
+              const parsed = JSON.parse(val);
+              if (parsed && typeof parsed === "object") {
+                if (parsed.Name) return esc(parsed.Name);
+                if (parsed.name) return esc(parsed.name);
+                // If no Name, try to return the first string value
+                const firstVal = Object.values(parsed).find(v => typeof v === "string");
+                if (firstVal) return esc(String(firstVal));
+              }
+            } catch (e) {
+              // Ignore parse errors, treat as string
+            }
+          }
+
           return esc(val);
         })(field, value);
 
@@ -367,7 +413,7 @@ function recordsTableHtml(records: Object[], objectType: string) {
         .replace(/<\/script>/gi, "<\\/script>")
         .replace(/<!--/g, "<\\!--");
 
-      return `<tr class="record-row" onclick="editRecord(${index})" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
+      return `<tr class="record-row" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
     })
     .join("\n");
 
@@ -398,7 +444,7 @@ function recordsTableHtml(records: Object[], objectType: string) {
     table{width:100%;border-collapse:collapse}
     th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
     th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
-    .record-row{cursor:pointer;transition:background-color 0.15s}
+    .record-row{transition:background-color 0.15s}
     .record-row:hover{background:#f9f9fb}
     .record-row:first-child{border-bottom:1px solid #e5e7eb}
     .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -496,7 +542,7 @@ Example usage: When a user wants to edit a contact's information, this tool open
     properties: {
       text: {
         type: "string",
-        description: "Text representation of the record to edit, formatted as: 'ObjectName\\n\\n* Field1: value1\\n* Field2: value2\\n...' with Name and Id as required fields"
+        description: "JSON string or text representation of the record to edit. If JSON, should be a valid object string. If text, formatted as: 'ObjectName\\n\\n* Field1: value1...'"
       }
     },
     required: ["text"]
@@ -559,7 +605,7 @@ ACTIVATE THIS TOOL when users say things like:
 The tool provides an interactive table with:
 • All records displayed in rows and columns
 • Action button in the first column to edit each individual record
-• Clickable rows to launch edit mode for individual records (maintaining backward compatibility)
+
 • Consistent styling with edit forms
 • Smart field formatting (dates, percentages, etc.)
 • Responsive design for different screen sizes
@@ -573,7 +619,7 @@ Example usage: When a user wants to see a list of contacts or accounts and be ab
         items: {
           type: "string"
         },
-        description: "Array of text representations for records, each formatted as: 'ObjectName\\n\\n* Field1: value1\\n* Field2: value2\\n...' with Name and Id as required fields per record"
+        description: "Array of JSON strings or text representations for records."
       },
       objectType: {
         type: "string",
@@ -613,7 +659,7 @@ export async function handleDisplayRecordsTable(conn: any, args: { records: stri
     return {
       content: [{
         type: "text",
-        text: `Error parsing records: ${errorMessage}\n\nExpected format for each record:\n\`\`\`\nObject Name\n\n* Id: record-id\n* Name: record-name\n* AnyField: value\n* AnotherField: value\n\`\`\``
+        text: `Error parsing records: ${errorMessage}\n\nExpected format: JSON string or text format`
       }],
       isError: true,
     };
@@ -699,8 +745,8 @@ function parseRecordDetailText(raw: string): { recordName: string; sections: Rec
 function recordDetailCardHtml(recordName: string, sections: RecordSection[], description?: string) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
-            .replace(/</g, '<')
-            .replace(/"/g, '"');
+      .replace(/</g, '<')
+      .replace(/"/g, '"');
   };
 
   // Generate sections HTML

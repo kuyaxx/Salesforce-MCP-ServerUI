@@ -102,24 +102,7 @@ function validateRelationshipFields(fields: string[]): { isValid: boolean; error
   return { isValid: true };
 }
 
-// Helper function to format relationship query results
-function formatRelationshipResults(record: any, field: string, prefix = ''): string {
-  if (field.includes('.')) {
-    const [relationship, ...rest] = field.split('.');
-    const relatedRecord = record[relationship];
-    if (relatedRecord === null) {
-      return `${prefix}${field}: null`;
-    }
-    return formatRelationshipResults(relatedRecord, rest.join('.'), `${prefix}${relationship}.`);
-  }
 
-  const value = record[field];
-  if (Array.isArray(value)) {
-    // Handle child relationship arrays
-    return `${prefix}${field}: [${value.length} records]`;
-  }
-  return `${prefix}${field}: ${value !== null && value !== undefined ? value : 'null'}`;
-}
 
 export async function handleQueryRecords(conn: any, args: QueryArgs) {
   const { objectName, fields, whereClause, orderBy, limit } = args;
@@ -144,26 +127,11 @@ export async function handleQueryRecords(conn: any, args: QueryArgs) {
     if (limit) soql += ` LIMIT ${limit}`;
 
     const result = await conn.query(soql);
-    
-    // Format the output
-    const formattedRecords = result.records.map((record: any, index: number) => {
-      const recordStr = fields.map(field => {
-        // Handle special case for subqueries (child relationships)
-        if (field.startsWith('(SELECT')) {
-          const relationshipName = field.match(/FROM\s+(\w+)/)?.[1];
-          if (!relationshipName) return `    ${field}: Invalid subquery format`;
-          const childRecords = record[relationshipName];
-          return `    ${relationshipName}: [${childRecords?.length || 0} records]`;
-        }
-        return '    ' + formatRelationshipResults(record, field);
-      }).join('\n');
-      return `Record ${index + 1}:\n${recordStr}`;
-    }).join('\n\n');
 
     return {
       content: [{
         type: "text",
-        text: `Query returned ${result.records.length} records:\n\n${formattedRecords}`
+        text: JSON.stringify(result.records, null, 2)
       }],
       isError: false,
     };

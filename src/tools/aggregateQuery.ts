@@ -125,9 +125,9 @@ function extractNonAggregateFields(selectFields: string[]): string[] {
 function validateGroupByFields(selectFields: string[], groupByFields: string[]): { isValid: boolean; missingFields?: string[] } {
   const nonAggregateFields = extractNonAggregateFields(selectFields);
   const groupBySet = new Set(groupByFields.map(f => f.trim()));
-  
+
   const missingFields = nonAggregateFields.filter(field => !groupBySet.has(field));
-  
+
   return {
     isValid: missingFields.length === 0,
     missingFields
@@ -137,7 +137,7 @@ function validateGroupByFields(selectFields: string[], groupByFields: string[]):
 // Helper function to validate WHERE clause doesn't contain aggregates
 function validateWhereClause(whereClause: string | undefined): { isValid: boolean; error?: string } {
   if (!whereClause) return { isValid: true };
-  
+
   const upperWhere = whereClause.toUpperCase();
   for (const func of AGGREGATE_FUNCTIONS) {
     if (upperWhere.includes(`${func}(`)) {
@@ -147,22 +147,22 @@ function validateWhereClause(whereClause: string | undefined): { isValid: boolea
       };
     }
   }
-  
+
   return { isValid: true };
 }
 
 // Helper function to validate ORDER BY fields
 function validateOrderBy(orderBy: string | undefined, groupByFields: string[], selectFields: string[]): { isValid: boolean; error?: string } {
   if (!orderBy) return { isValid: true };
-  
+
   // Extract fields from ORDER BY (handling DESC/ASC)
   const orderByParts = orderBy.split(',').map(part => {
     return part.trim().replace(/ (DESC|ASC)$/i, '').trim();
   });
-  
+
   const groupBySet = new Set(groupByFields);
   const aggregateFields = selectFields.filter(field => isAggregateField(field)).map(field => extractBaseField(field));
-  
+
   for (const orderField of orderByParts) {
     // Check if it's in GROUP BY or is an aggregate
     if (!groupBySet.has(orderField) && !aggregateFields.some(agg => agg === orderField) && !isAggregateField(orderField)) {
@@ -172,7 +172,7 @@ function validateOrderBy(orderBy: string | undefined, groupByFields: string[], s
       };
     }
   }
-  
+
   return { isValid: true };
 }
 
@@ -187,7 +187,7 @@ export async function handleAggregateQuery(conn: any, args: AggregateQueryArgs) 
         content: [{
           type: "text",
           text: `Error: The following non-aggregate fields must be included in GROUP BY clause: ${groupByValidation.missingFields!.join(', ')}\n\n` +
-                `All fields in SELECT that are not aggregate functions (COUNT, SUM, AVG, etc.) must be included in GROUP BY.`
+            `All fields in SELECT that are not aggregate functions (COUNT, SUM, AVG, etc.) must be included in GROUP BY.`
         }],
         isError: true,
       };
@@ -226,40 +226,17 @@ export async function handleAggregateQuery(conn: any, args: AggregateQueryArgs) 
     if (limit) soql += ` LIMIT ${limit}`;
 
     const result = await conn.query(soql);
-    
-    // Format the output
-    const formattedRecords = result.records.map((record: any, index: number) => {
-      const recordStr = selectFields.map(field => {
-        const baseField = extractBaseField(field);
-        const fieldParts = field.trim().split(/\s+/);
-        const displayName = fieldParts.length > 1 ? fieldParts[fieldParts.length - 1] : baseField;
-        
-        // Handle nested fields in results
-        if (baseField.includes('.')) {
-          const parts = baseField.split('.');
-          let value = record;
-          for (const part of parts) {
-            value = value?.[part];
-          }
-          return `    ${displayName}: ${value !== null && value !== undefined ? value : 'null'}`;
-        }
-        
-        const value = record[baseField] || record[displayName];
-        return `    ${displayName}: ${value !== null && value !== undefined ? value : 'null'}`;
-      }).join('\n');
-      return `Group ${index + 1}:\n${recordStr}`;
-    }).join('\n\n');
 
     return {
       content: [{
         type: "text",
-        text: `Aggregate query returned ${result.records.length} grouped results:\n\n${formattedRecords}`
+        text: JSON.stringify(result.records, null, 2)
       }],
       isError: false,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+
     // Provide more helpful error messages for common issues
     let enhancedError = errorMessage;
     if (errorMessage.includes('MALFORMED_QUERY')) {

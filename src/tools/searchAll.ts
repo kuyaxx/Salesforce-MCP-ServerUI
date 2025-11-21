@@ -55,7 +55,7 @@ Notes:
         items: {
           type: "object",
           properties: {
-            name: { 
+            name: {
               type: "string",
               description: "API name of the object"
             },
@@ -91,8 +91,8 @@ Notes:
           properties: {
             type: {
               type: "string",
-              enum: ["DATA CATEGORY", "DIVISION", "METADATA", "NETWORK", 
-                    "PRICEBOOKID", "SNIPPET", "SECURITY_ENFORCED"]
+              enum: ["DATA CATEGORY", "DIVISION", "METADATA", "NETWORK",
+                "PRICEBOOKID", "SNIPPET", "SECURITY_ENFORCED"]
             },
             value: {
               type: "string",
@@ -135,8 +135,8 @@ export interface SearchObject {
 }
 
 export interface WithClause {
-  type: "DATA CATEGORY" | "DIVISION" | "METADATA" | "NETWORK" | 
-        "PRICEBOOKID" | "SNIPPET" | "SECURITY_ENFORCED";
+  type: "DATA CATEGORY" | "DIVISION" | "METADATA" | "NETWORK" |
+  "PRICEBOOKID" | "SNIPPET" | "SECURITY_ENFORCED";
   value?: string;
   fields?: string[];
 }
@@ -180,12 +180,12 @@ export async function handleSearchAll(conn: any, args: SearchAllArgs) {
     const returningClause = objects
       .map(obj => {
         let clause = `${obj.name}(${obj.fields.join(',')}`
-        
+
         // Add object-specific clauses if present
         if (obj.where) clause += ` WHERE ${obj.where}`;
         if (obj.orderBy) clause += ` ORDER BY ${obj.orderBy}`;
         if (obj.limit) clause += ` LIMIT ${obj.limit}`;
-        
+
         return clause + ')';
       })
       .join(', ');
@@ -199,7 +199,7 @@ export async function handleSearchAll(conn: any, args: SearchAllArgs) {
     const accessFlags = [];
     if (updateable) accessFlags.push('UPDATEABLE');
     if (viewable) accessFlags.push('VIEWABLE');
-    const accessClause = accessFlags.length > 0 ? 
+    const accessClause = accessFlags.length > 0 ?
       ` RETURNING ${accessFlags.join(',')}` : '';
 
     // Construct complete SOSL query
@@ -211,42 +211,10 @@ export async function handleSearchAll(conn: any, args: SearchAllArgs) {
     // Execute search
     const result = await conn.search(soslQuery);
 
-    // Format results by object
-    let formattedResults = '';
-    objects.forEach((obj, index) => {
-      const objectResults = result.searchRecords.filter((record: any) => 
-        record.attributes.type === obj.name
-      );
-
-      formattedResults += `\n${obj.name} (${objectResults.length} records found):\n`;
-      
-      if (objectResults.length > 0) {
-        objectResults.forEach((record: any, recordIndex: number) => {
-          formattedResults += `  Record ${recordIndex + 1}:\n`;
-          obj.fields.forEach(field => {
-            const value = record[field];
-            formattedResults += `    ${field}: ${value !== null && value !== undefined ? value : 'null'}\n`;
-          });
-          // Add metadata or snippet info if requested
-          if (withClauses?.some(w => w.type === "METADATA")) {
-            formattedResults += `    Metadata:\n      Last Modified: ${record.attributes.lastModifiedDate}\n`;
-          }
-          if (withClauses?.some(w => w.type === "SNIPPET")) {
-            formattedResults += `    Snippets:\n${record.snippets?.map((s: any) => 
-              `      ${s.field}: ${s.snippet}`).join('\n') || '      None'}\n`;
-          }
-        });
-      }
-
-      if (index < objects.length - 1) {
-        formattedResults += '\n';
-      }
-    });
-
     return {
       content: [{
         type: "text",
-        text: `Search Results:${formattedResults}`
+        text: JSON.stringify(result.searchRecords, null, 2)
       }],
       isError: false,
     };

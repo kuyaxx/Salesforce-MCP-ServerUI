@@ -18,22 +18,11 @@ export const DESCRIBE_OBJECT: Tool = {
 
 export async function handleDescribeObject(conn: any, objectName: string) {
   const describe = await conn.describe(objectName) as SalesforceDescribeResponse;
-  
-  // Format the output
-  const formattedDescription = `
-Object: ${describe.name} (${describe.label})${describe.custom ? ' (Custom Object)' : ''}
-Fields:
-${describe.fields.map((field: SalesforceField) => `  - ${field.name} (${field.label})
-    Type: ${field.type}${field.length ? `, Length: ${field.length}` : ''}
-    Required: ${!field.nillable}
-    ${field.referenceTo && field.referenceTo.length > 0 ? `References: ${field.referenceTo.join(', ')}` : ''}
-    ${field.picklistValues && field.picklistValues.length > 0 ? `Picklist Values: ${field.picklistValues.map((v: { value: string }) => v.value).join(', ')}` : ''}`
-  ).join('\n')}`;
 
   return {
     content: [{
       type: "text",
-      text: formattedDescription
+      text: JSON.stringify(describe, null, 2)
     }],
     isError: false,
   };

@@ -33,9 +33,9 @@ export const MANAGE_FIELD: Tool = {
       },
       type: {
         type: "string",
-        enum: ["Checkbox", "Currency", "Date", "DateTime", "Email", "Number", "Percent", 
-               "Phone", "Picklist", "MultiselectPicklist", "Text", "TextArea", "LongTextArea", 
-               "Html", "Url", "Lookup", "MasterDetail"],
+        enum: ["Checkbox", "Currency", "Date", "DateTime", "Email", "Number", "Percent",
+          "Phone", "Picklist", "MultiselectPicklist", "Text", "TextArea", "LongTextArea",
+          "Html", "Url", "Lookup", "MasterDetail"],
         description: "Field type (required for create)",
         optional: true
       },
@@ -140,11 +140,11 @@ export interface ManageFieldArgs {
 }
 
 // Helper function to set field permissions (simplified version of the one in manageFieldPermissions.ts)
-async function grantFieldPermissions(conn: any, objectName: string, fieldName: string, profileNames: string[]): Promise<{success: boolean; message: string}> {
+async function grantFieldPermissions(conn: any, objectName: string, fieldName: string, profileNames: string[]): Promise<{ success: boolean; message: string }> {
   try {
     const fieldApiName = fieldName.endsWith('__c') || fieldName.includes('.') ? fieldName : `${fieldName}__c`;
     const fullFieldName = `${objectName}.${fieldApiName}`;
-    
+
     // Get profile IDs
     const profileQuery = await conn.query(`
       SELECT Id, Name 
@@ -307,20 +307,26 @@ export async function handleManageField(conn: any, args: ManageFieldArgs) {
 
       if (result && (Array.isArray(result) ? result[0].success : result.success)) {
         let permissionMessage = '';
-        
+
         // Grant Field Level Security (default to System Administrator if not specified)
         const profilesToGrant = grantAccessTo && grantAccessTo.length > 0 ? grantAccessTo : ['System Administrator'];
-        
+
         // Wait a moment for field to be fully created
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
+
         const permissionResult = await grantFieldPermissions(conn, objectName, fieldName, profilesToGrant);
         permissionMessage = `\n${permissionResult.message}`;
-        
+
         return {
           content: [{
             type: "text",
-            text: `Successfully created custom field ${fieldName}__c on ${objectName}.${permissionMessage}`
+            text: JSON.stringify({
+              success: true,
+              message: `Successfully created custom field ${fieldName}__c on ${objectName}.${permissionMessage}`,
+              objectName,
+              fieldName: `${fieldName}__c`,
+              operation: 'create'
+            }, null, 2)
           }],
           isError: false,
         };
@@ -347,8 +353,8 @@ export async function handleManageField(conn: any, args: ManageFieldArgs) {
       };
 
       // Special handling for picklist values if provided
-      if (fieldProps.picklistValues && 
-          (currentMetadata.type === 'Picklist' || currentMetadata.type === 'MultiselectPicklist')) {
+      if (fieldProps.picklistValues &&
+        (currentMetadata.type === 'Picklist' || currentMetadata.type === 'MultiselectPicklist')) {
         metadata.valueSet = {
           valueSetDefinition: {
             sorted: true,
@@ -368,7 +374,13 @@ export async function handleManageField(conn: any, args: ManageFieldArgs) {
         return {
           content: [{
             type: "text",
-            text: `Successfully updated custom field ${fieldName}__c on ${objectName}`
+            text: JSON.stringify({
+              success: true,
+              message: `Successfully updated custom field ${fieldName}__c on ${objectName}`,
+              objectName,
+              fieldName: `${fieldName}__c`,
+              operation: 'update'
+            }, null, 2)
           }],
           isError: false,
         };
@@ -378,7 +390,13 @@ export async function handleManageField(conn: any, args: ManageFieldArgs) {
     return {
       content: [{
         type: "text",
-        text: `Failed to ${operation} custom field ${fieldName}__c`
+        text: JSON.stringify({
+          success: false,
+          message: `Failed to ${operation} custom field ${fieldName}__c`,
+          objectName,
+          fieldName: `${fieldName}__c`,
+          operation
+        }, null, 2)
       }],
       isError: true,
     };
@@ -387,7 +405,11 @@ export async function handleManageField(conn: any, args: ManageFieldArgs) {
     return {
       content: [{
         type: "text",
-        text: `Error ${operation === 'create' ? 'creating' : 'updating'} custom field: ${error instanceof Error ? error.message : String(error)}`
+        text: JSON.stringify({
+          success: false,
+          message: `Error ${operation === 'create' ? 'creating' : 'updating'} custom field: ${error instanceof Error ? error.message : String(error)}`,
+          error: error instanceof Error ? error.message : String(error)
+        }, null, 2)
       }],
       isError: true,
     };
