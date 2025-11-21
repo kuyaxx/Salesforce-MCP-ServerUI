@@ -14,7 +14,7 @@ import { DESCRIBE_OBJECT, handleDescribeObject } from "./tools/describe.js";
 import { QUERY_RECORDS, handleQueryRecords, QueryArgs } from "./tools/query.js";
 import { AGGREGATE_QUERY, handleAggregateQuery, AggregateQueryArgs } from "./tools/aggregateQuery.js";
 import { DML_RECORDS, handleDMLRecords, DMLArgs } from "./tools/dml.js";
-import { MANAGE_FIELD, handleManageField, ManageFieldArgs } from "./tools/manageField.js";
+
 import { SEARCH_ALL, handleSearchAll, SearchAllArgs, WithClause } from "./tools/searchAll.js";
 import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable, VIEW_RECORD_DETAIL, handleViewRecordDetail, ViewRecordDetailArgs } from "./tools/ui.js";
 
@@ -42,7 +42,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     QUERY_RECORDS,
     AGGREGATE_QUERY,
     DML_RECORDS,
-    MANAGE_FIELD,
+
     SEARCH_ALL,
     EDIT_SINGLE_RECORD,
     VIEW_RECORDS_TABLE,
@@ -118,33 +118,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleDMLRecords(conn, validatedArgs);
       }
 
-      case "salesforce_manage_field": {
-        const fieldArgs = args as Record<string, unknown>;
-        if (!fieldArgs.operation || !fieldArgs.objectName || !fieldArgs.fieldName) {
-          throw new Error('operation, objectName, and fieldName are required for field management');
-        }
-        const validatedArgs: ManageFieldArgs = {
-          operation: fieldArgs.operation as 'create' | 'update',
-          objectName: fieldArgs.objectName as string,
-          fieldName: fieldArgs.fieldName as string,
-          label: fieldArgs.label as string | undefined,
-          type: fieldArgs.type as string | undefined,
-          required: fieldArgs.required as boolean | undefined,
-          unique: fieldArgs.unique as boolean | undefined,
-          externalId: fieldArgs.externalId as boolean | undefined,
-          length: fieldArgs.length as number | undefined,
-          precision: fieldArgs.precision as number | undefined,
-          scale: fieldArgs.scale as number | undefined,
-          referenceTo: fieldArgs.referenceTo as string | undefined,
-          relationshipLabel: fieldArgs.relationshipLabel as string | undefined,
-          relationshipName: fieldArgs.relationshipName as string | undefined,
-          deleteConstraint: fieldArgs.deleteConstraint as 'Cascade' | 'Restrict' | 'SetNull' | undefined,
-          picklistValues: fieldArgs.picklistValues as Array<{ label: string; isDefault?: boolean }> | undefined,
-          description: fieldArgs.description as string | undefined,
-          grantAccessTo: fieldArgs.grantAccessTo as string[] | undefined
-        };
-        return await handleManageField(conn, validatedArgs);
-      }
+
 
       case "salesforce_search_all": {
         const searchArgs = args as Record<string, unknown>;

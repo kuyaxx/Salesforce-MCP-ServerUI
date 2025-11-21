@@ -12,7 +12,7 @@ export interface ViewRecordsArgs {
   records: string[];
 }
 
-type Object = Record<string, string>;
+export type UIRecord = Record<string, string>;
 
 /* --------------------------------------------------------------
    CONSTANTS
@@ -25,7 +25,7 @@ const REQUIRED_FIELDS = [
 /* --------------------------------------------------------------
    1. Parse → de-duplicate + keep original casing
    -------------------------------------------------------------- */
-function parseObjectText(raw: string): Object {
+export function parseObjectText(raw: string): UIRecord {
   try {
     // Try parsing as JSON first
     const parsed = JSON.parse(raw);
@@ -39,7 +39,7 @@ function parseObjectText(raw: string): Object {
     // Handle single object
     if (typeof parsed === 'object' && parsed !== null) {
       // Convert all values to strings to match Object type definition
-      const sanitized: Object = {};
+      const sanitized: UIRecord = {};
       for (const [key, value] of Object.entries(parsed)) {
         if (value === null || value === undefined) {
           sanitized[key] = '';
@@ -77,7 +77,7 @@ function parseObjectText(raw: string): Object {
   const missing = REQUIRED_FIELDS.filter(f => !fieldMap.has(f.toLowerCase()));
   if (missing.length) throw new Error(`Missing required fields: ${missing.join(", ")}`);
 
-  const obj: Object = { Name: nameLine };
+  const obj: UIRecord = { Name: nameLine };
   for (const [lower, value] of valueMap.entries()) {
     const label = fieldMap
       .get(lower)!
@@ -117,7 +117,7 @@ function isIsoDate(value: string): boolean {
 /* --------------------------------------------------------------
    3. Dynamic HTML Card (with smart input types)
    -------------------------------------------------------------- */
-function objectCardHtml(obj: Object) {
+export function objectCardHtml(obj: UIRecord) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
       .replace(/</g, '<')
@@ -302,7 +302,7 @@ function objectCardHtml(obj: Object) {
 /* --------------------------------------------------------------
    3b. Records Table HTML (for viewing multiple records)
    -------------------------------------------------------------- */
-function recordsTableHtml(records: Object[], objectType: string) {
+export function recordsTableHtml(records: UIRecord[], objectType: string) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
       .replace(/</g, '<')
@@ -487,7 +487,7 @@ function recordsTableHtml(records: Object[], objectType: string) {
       const record = allRecords[recordIndex];
       if (record) {
         // Build prompt to open record in edit mode
-        const prompt = "Edit this " + (record.Name || "record") + " record in the UI form:";
+        const prompt = "Edit this " + (record.Name || "record") + " record.";
 
         parent.postMessage({
           type: "prompt",
@@ -556,7 +556,7 @@ export async function handleEditSingleRecord(conn: any, args: EditRecordArgs) {
   const { text } = args;
 
   try {
-    let obj: Object;
+    let obj: UIRecord;
     obj = parseObjectText(text);
 
     const summary = Object.entries(obj)
@@ -638,7 +638,7 @@ export async function handleDisplayRecordsTable(conn: any, args: { records: stri
 
   try {
     // Parse each record text into objects
-    const parsedRecords: Object[] = records.map(text => parseObjectText(text));
+    const parsedRecords: UIRecord[] = records.map(text => parseObjectText(text));
 
     const summary = `Found ${parsedRecords.length} ${objectType} record${parsedRecords.length === 1 ? '' : 's'}`;
 
@@ -673,7 +673,7 @@ export interface ViewRecordDetailArgs {
   text: string;
 }
 
-interface RecordSection {
+export interface RecordSection {
   header: string;
   fields: Record<string, string>;
 }
@@ -742,7 +742,7 @@ function parseRecordDetailText(raw: string): { recordName: string; sections: Rec
 /* --------------------------------------------------------------
    8b. Generate Record Detail Card HTML
    -------------------------------------------------------------- */
-function recordDetailCardHtml(recordName: string, sections: RecordSection[], description?: string) {
+export function recordDetailCardHtml(recordName: string, sections: RecordSection[], fullRecord: Record<string, string>, description?: string) {
   const esc = (s: string) => {
     return s.replace(/&/g, '&')
       .replace(/</g, '<')
@@ -795,6 +795,10 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
       <div class="description">${esc(description)}</div>
     </div>` : '';
 
+  const fullRecordJson = JSON.stringify(fullRecord)
+    .replace(/<\/script>/gi, "<\\/script>")
+    .replace(/<!--/g, "<\\!--");
+
   return `
 <!DOCTYPE html>
 <html>
@@ -809,9 +813,13 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
     .header {
       background: linear-gradient(135deg, #6366f1, #8b5cf6);
       color: white;
+      color: white;
       padding: 20px;
       text-align: center;
     }
+    .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
+    .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
+    .btn.primary{background:#111;color:#fff}
     .title {
       font-size: 24px;
       font-weight: 600;
@@ -889,9 +897,15 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
     </div>
     ${sectionsHtml}
     ${descriptionHtml}
+    <div class="actions">
+      <button class="btn primary" onclick="editRecord()">Edit</button>
+    </div>
     </div>
   </div>
   <script>
+    // Full record data
+    const fullRecord = ${fullRecordJson};
+
     // Resize observer
     const observer = new ResizeObserver(es => {
       for (const e of es) {
@@ -902,6 +916,33 @@ function recordDetailCardHtml(recordName: string, sections: RecordSection[], des
       }
     });
     observer.observe(document.documentElement);
+
+    function editRecord() {
+      if (fullRecord) {
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (fullRecord.Name || "record") + " record.";
+
+        parent.postMessage({
+          type: "prompt",
+          payload: {
+            prompt,
+            params: { text: formatRecordForEdit(fullRecord) }
+          }
+        }, "*");
+      }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
+    }
   </script>
 </body>
 </html>`;
@@ -955,12 +996,18 @@ export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailAr
 
     const recordId = recordName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
 
+    // Construct full record object from sections
+    const fullRecord: Record<string, string> = { Name: recordName };
+    for (const section of sections) {
+      Object.assign(fullRecord, section.fields);
+    }
+
     return {
       content: [
         { type: "text", text: summary },
         createUIResource({
           uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
-          content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, description) },
+          content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, fullRecord, description) },
           encoding: "text",
         }),
       ],

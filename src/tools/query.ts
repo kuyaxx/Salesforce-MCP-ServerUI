@@ -1,4 +1,6 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { createUIResource } from "@mcp-ui/server";
+import { recordsTableHtml, recordDetailCardHtml, RecordSection, UIRecord } from "./ui.js";
 
 export const QUERY_RECORDS: Tool = {
   name: "salesforce_query_records",
@@ -128,11 +130,59 @@ export async function handleQueryRecords(conn: any, args: QueryArgs) {
 
     const result = await conn.query(soql);
 
+    // Convert records to UIRecord format (string values)
+    const uiRecords: UIRecord[] = result.records.map((r: any) => {
+      const rec: UIRecord = {};
+      for (const [k, v] of Object.entries(r)) {
+        if (k === 'attributes') continue;
+        if (v === null || v === undefined) {
+          rec[k] = '';
+        } else if (typeof v === 'object') {
+          // If it has a Name, use it (common for parent relationships)
+          if ('Name' in (v as any)) {
+            rec[k] = (v as any).Name;
+          } else {
+            rec[k] = JSON.stringify(v);
+          }
+        } else {
+          rec[k] = String(v);
+        }
+      }
+      return rec;
+    });
+
+    const recordCount = uiRecords.length;
+    const summary = `Found ${recordCount} record${recordCount === 1 ? '' : 's'}`;
+    const content: any[] = [{ type: "text", text: JSON.stringify(result.records, null, 2) }];
+
+    if (recordCount === 1) {
+      const record = uiRecords[0];
+      const recordName = record.Name || record.Id || "Record";
+      const recordId = record.Id || "unknown";
+
+      const sections: RecordSection[] = [{
+        header: "Details",
+        fields: record
+      }];
+
+      content.push(createUIResource({
+        uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
+        content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, record) },
+        encoding: "text",
+      }));
+    } else if (recordCount > 1) {
+      const objectType = objectName;
+      const recordsId = uiRecords[0].Id || "table";
+
+      content.push(createUIResource({
+        uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+        content: { type: "rawHtml", htmlString: recordsTableHtml(uiRecords, objectType) },
+        encoding: "text",
+      }));
+    }
+
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify(result.records, null, 2)
-      }],
+      content,
       isError: false,
     };
   } catch (error) {
