@@ -516,6 +516,172 @@ export function recordsTableHtml(records: UIRecord[], objectType: string) {
 }
 
 /* --------------------------------------------------------------
+   3c. Read-Only Records Table HTML (for aggregate/analytical queries)
+   -------------------------------------------------------------- */
+export function readOnlyTableHtml(records: UIRecord[], title: string) {
+  const esc = (s: string) => {
+    return s.replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/"/g, '&quot;');
+  };
+
+  if (records.length === 0) {
+    return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Results – ${title}</title>
+  <style>
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+    .wrap{max-width:1024px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+    .header{padding:16px 20px;border-bottom:1px solid #eee}
+    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+    .body{padding:20px;text-align:center;color:#6b7280}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${title}</h1></div>
+      <div class="body">
+        <p>No results found.</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Resize observer
+    const observer = new ResizeObserver(es => {
+      for (const e of es) {
+        parent.postMessage(
+          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+          "*"
+        );
+      }
+    });
+    observer.observe(document.documentElement);
+  </script>
+</body>
+</html>`;
+  }
+
+  // Get all field names from all records
+  const allFields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record).forEach(field => allFields.add(field));
+  });
+
+  const fields = Array.from(allFields).sort((a, b) => {
+    if (a === "Name") return -1;
+    if (b === "Name") return 1;
+    if (a === "Id") return 1;
+    if (b === "Id") return -1;
+    return a.localeCompare(b);
+  });
+
+  const tableRows = records
+    .map((record) => {
+      const cells = fields.map(field => {
+        const value = record[field] || "";
+        const displayValue = ((field: string, val: string) => {
+          if (val === "") return "";
+
+          // Format dates
+          if (field.toLowerCase().includes("date") && isIsoDate(val)) {
+            if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
+            const d = new Date(val);
+            if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+          }
+
+          // Format probability (if it has %)
+          if (field.toLowerCase().includes("probability") && val.endsWith("%")) {
+            return val;
+          }
+
+          // Try to parse JSON if it looks like an object
+          if (val.trim().startsWith("{") && val.trim().endsWith("}")) {
+            try {
+              const parsed = JSON.parse(val);
+              if (parsed && typeof parsed === "object") {
+                if (parsed.Name) return esc(parsed.Name);
+                if (parsed.name) return esc(parsed.name);
+                // If no Name, try to return the first string value
+                const firstVal = Object.values(parsed).find(v => typeof v === "string");
+                if (firstVal) return esc(String(firstVal));
+              }
+            } catch (e) {
+              // Ignore parse errors, treat as string
+            }
+          }
+
+          return esc(val);
+        })(field, value);
+
+        return `<td class="cell">${displayValue}</td>`;
+      }).join("");
+
+      return `<tr class="record-row">${cells}</tr>`;
+    })
+    .join("\n");
+
+  const tableHeaders = fields.map(field => `<th class="header-cell">${esc(field)}</th>`).join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Results – ${title}</title>
+  <style>
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+    .wrap{max-width:1024px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+    .header{padding:16px 20px;border-bottom:1px solid #eee}
+    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+    .body{padding:0}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
+    th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
+    .record-row{transition:background-color 0.15s}
+    .record-row:hover{background:#f9f9fb}
+    .record-row:first-child{border-bottom:1px solid #e5e7eb}
+    .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
+    .no-records{text-align:center;padding:40px;color:#6b7280}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${title}</h1></div>
+      <div class="body">
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Resize observer
+    const observer = new ResizeObserver(es => {
+      for (const e of es) {
+        parent.postMessage(
+          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+          "*"
+        );
+      }
+    });
+    observer.observe(document.documentElement);
+  </script>
+</body>
+</html>`;
+}
+
+/* --------------------------------------------------------------
    4. Tool Definition (MCP SDK format)
    -------------------------------------------------------------- */
 export const EDIT_SINGLE_RECORD: Tool = {
