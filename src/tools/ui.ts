@@ -1,9 +1,9 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createUIResource } from "@mcp-ui/server";
 
-/* --------------------------------------------------------------
-   TYPES
-   -------------------------------------------------------------- */
+/* ==============================================================
+   TYPES & INTERFACES
+   ============================================================== */
 export interface EditRecordArgs {
   text: string;
 }
@@ -12,19 +12,245 @@ export interface ViewRecordsArgs {
   records: string[];
 }
 
+export interface ViewRecordDetailArgs {
+  text: string;
+}
+
+export interface RecordSection {
+  header: string;
+  fields: Record<string, string>;
+}
+
 export type UIRecord = Record<string, string>;
 
-/* --------------------------------------------------------------
+/* ==============================================================
    CONSTANTS
-   -------------------------------------------------------------- */
+   ============================================================== */
 const REQUIRED_FIELDS = [
   "Name",
   "Id",
 ] as const;
 
-/* --------------------------------------------------------------
-   1. Parse → de-duplicate + keep original casing
-   -------------------------------------------------------------- */
+// Shared CSS Styles
+const COMMON_STYLES = `
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+  .wrap{max-width:720px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+  .header{padding:16px 20px;border-bottom:1px solid #eee}
+  .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+  .body{padding:20px}
+`;
+
+const TABLE_STYLES = `
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+  .wrap{max-width:1024px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+  .header{padding:16px 20px;border-bottom:1px solid #eee}
+  .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+  .body{padding:0}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
+  th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
+  .record-row{transition:background-color 0.15s}
+  .record-row:hover{background:#f9f9fb}
+  .record-row:first-child{border-bottom:1px solid #e5e7eb}
+  .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
+  .no-records{text-align:center;padding:40px;color:#6b7280}
+`;
+
+const EDIT_FORM_STYLES = `
+  .field{margin-bottom:16px;position:relative}
+  .field label{display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:4px}
+  .input-wrapper{position:relative}
+  .field input[type=text],.field input[type=date]{
+    width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;
+    font-size:15px;background:#fff;color:#111;box-sizing:border-box;
+  }
+  .percent-field input{padding-right:32px}
+  .percent-symbol{
+    position:absolute;right:12px;top:50%;transform:translateY(-50%);
+    color:#6b7280;font-size:14px;pointer-events:none;
+  }
+  .field input:focus{border-color:#111;outline:none}
+  .field input[readonly]{background:#f3f4f6;color:#6b7280}
+  .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
+  .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
+  .btn.primary{background:#111;color:#fff}
+  .btn.cancel{background:#e5e7eb;color:#111}
+`;
+
+const TABLE_ACTION_STYLES = `
+  .action-cell{text-align:center;width:80px}
+  .edit-btn{background:#111;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color 0.15s}
+  .edit-btn:hover{background:#333}
+  .edit-btn:active{background:#000}
+`;
+
+// Shared Scripts
+const RESIZE_OBSERVER_SCRIPT = `
+  const observer = new ResizeObserver(es => {
+    for (const e of es) {
+      parent.postMessage(
+        { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+        "*"
+      );
+    }
+  });
+  observer.observe(document.documentElement);
+`;
+
+/* ==============================================================
+   UTILITY FUNCTIONS
+   ============================================================== */
+
+/**
+ * HTML escape function - prevents XSS attacks
+ */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Safely inject JSON into HTML script tags
+ */
+function safeJsonInject(obj: any): string {
+  return JSON.stringify(obj)
+    .replace(/<\/script>/gi, "<\\/script>")
+    .replace(/<!--/g, "<\\!--");
+}
+
+/**
+ * Strict ISO Date Check (excludes %, $, numbers, etc.)
+ */
+function isIsoDate(value: string): boolean {
+  const trimmed = value.trim();
+
+  // Block common non-dates early
+  if (/%$/.test(trimmed)) return false;
+  if (/^\$/.test(trimmed)) return false;
+  if (/^\d+$/.test(trimmed)) return false; // pure number
+  if (trimmed.includes('$') || trimmed.includes('%') || trimmed.includes(',')) return false;
+
+  // Strict YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-').map(Number);
+    return y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31;
+  }
+
+  // Fallback: try parsing, but reject ancient/future dates
+  const parsed = Date.parse(trimmed);
+  if (isNaN(parsed)) return false;
+  const year = new Date(parsed).getFullYear();
+  return year >= 1900 && year <= 2100;
+}
+
+/**
+ * Format display value for table cells
+ */
+function formatDisplayValue(field: string, value: string): string {
+  if (value === "") return "";
+
+  // Format dates
+  if (field.toLowerCase().includes("date") && isIsoDate(value)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  }
+
+  // Format probability (if it has %)
+  if (field.toLowerCase().includes("probability") && value.endsWith("%")) {
+    return value;
+  }
+
+  // Try to parse JSON if it looks like an object
+  if (value.trim().startsWith("{") && value.trim().endsWith("}")) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object") {
+        if (parsed.Name) return esc(parsed.Name);
+        if (parsed.name) return esc(parsed.name);
+        // If no Name, try to return the first string value
+        const firstVal = Object.values(parsed).find(v => typeof v === "string");
+        if (firstVal) return esc(String(firstVal));
+      }
+    } catch (e) {
+      // Ignore parse errors, treat as string
+    }
+  }
+
+  return esc(value);
+}
+
+/**
+ * Format record for edit mode (used in multiple places)
+ */
+function formatRecordForEdit(record: UIRecord): string {
+  let textContent = record.Name || "Record";
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key !== "Name") {
+      textContent += "\\n* " + key + ": " + value;
+    }
+  }
+
+  return textContent;
+}
+
+/**
+ * Sort fields with Name first, Id last
+ */
+function sortFields(fields: string[]): string[] {
+  return fields.sort((a, b) => {
+    if (a === "Name") return -1;
+    if (b === "Name") return 1;
+    if (a === "Id") return 1;
+    if (b === "Id") return -1;
+    return a.localeCompare(b);
+  });
+}
+
+/**
+ * Generate empty state HTML
+ */
+function generateEmptyStateHtml(title: string, message: string): string {
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>${title}</title>
+  <style>
+    ${COMMON_STYLES}
+    .body{padding:20px;text-align:center;color:#6b7280}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${title}</h1></div>
+      <div class="body">
+        <p>${message}</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${RESIZE_OBSERVER_SCRIPT}
+  </script>
+</body>
+</html>`;
+}
+
+/* ==============================================================
+   PARSING FUNCTIONS
+   ============================================================== */
+
+/**
+ * Parse object text (JSON or text format) → UIRecord
+ */
 export function parseObjectText(raw: string): UIRecord {
   try {
     // Try parsing as JSON first
@@ -89,764 +315,9 @@ export function parseObjectText(raw: string): UIRecord {
   return obj;
 }
 
-/* --------------------------------------------------------------
-   2. Strict ISO Date Check (excludes %, $, numbers, etc.)
-   -------------------------------------------------------------- */
-function isIsoDate(value: string): boolean {
-  const trimmed = value.trim();
-
-  // Block common non-dates early
-  if (/%$/.test(trimmed)) return false;
-  if (/^\$/.test(trimmed)) return false;
-  if (/^\d+$/.test(trimmed)) return false; // pure number
-  if (trimmed.includes('$') || trimmed.includes('%') || trimmed.includes(',')) return false;
-
-  // Strict YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    const [y, m, d] = trimmed.split('-').map(Number);
-    return y >= 1900 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31;
-  }
-
-  // Fallback: try parsing, but reject ancient/future dates
-  const parsed = Date.parse(trimmed);
-  if (isNaN(parsed)) return false;
-  const year = new Date(parsed).getFullYear();
-  return year >= 1900 && year <= 2100;
-}
-
-/* --------------------------------------------------------------
-   3. Dynamic HTML Card (with smart input types)
-   -------------------------------------------------------------- */
-export function objectCardHtml(obj: UIRecord) {
-  const esc = (s: string) => {
-    return s.replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/"/g, '"');
-  };
-
-  const sortedKeys = Object.keys(obj).sort((a, b) => {
-    if (a === "Id") return 1;
-    if (b === "Id") return -1;
-    return a.localeCompare(b);
-  });
-
-  const fieldsHtml = sortedKeys
-    .map(key => {
-      const value = obj[key];
-      const id = key.replace(/\s+/g, "").toLowerCase();
-      const lowerKey = key.toLowerCase();
-
-      const isId = lowerKey === "id";
-      const isDateField = lowerKey.includes("date");
-      const isProbabilityField = lowerKey.includes("probability");
-      const isAmountField = lowerKey.includes("amount") || lowerKey.includes("revenue");
-
-      const forceText = isProbabilityField || isAmountField || isId;
-      let type = "text";
-      let inputValue = esc(value);
-
-      // Date fields: only if value is valid ISO date
-      if (!forceText && isDateField && isIsoDate(value)) {
-        type = "date";
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-          const d = new Date(value);
-          if (!isNaN(d.getTime())) {
-            inputValue = d.toISOString().split("T")[0];
-          }
-        }
-      }
-
-      // Probability: strip % for editing
-      if (isProbabilityField && /%\s*$/.test(value)) {
-        inputValue = esc(value.replace(/%\s*$/, "").trim());
-      }
-
-      const readonly = isId ? 'readonly style="background:#f3f4f6"' : "";
-
-      const percentSymbol = isProbabilityField
-        ? `<span class="percent-symbol">%</span>`
-        : "";
-
-      return `
-        <div class="field ${isProbabilityField ? "percent-field" : ""}">
-          <label for="${id}">${esc(key)}</label>
-          <div class="input-wrapper">
-            <input type="${type}" id="${id}" value="${inputValue}" ${readonly}>
-            ${percentSymbol}
-          </div>
-        </div>`;
-    })
-    .join("\n");
-
-  const title = esc(obj.Name || "Object");
-
-  // Safely inject original data
-  const objJson = JSON.stringify(obj)
-    .replace(/<\/script>/gi, "<\\/script>")
-    .replace(/<!--/g, "<\\!--");
-
-  return `
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Edit – ${title}</title>
-  <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:720px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:20px}
-    .field{margin-bottom:16px;position:relative}
-    .field label{display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:4px}
-    .input-wrapper{position:relative}
-    .field input[type=text],.field input[type=date]{
-      width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;
-      font-size:15px;background:#fff;color:#111;box-sizing:border-box;
-    }
-    .percent-field input{padding-right:32px}
-    .percent-symbol{
-      position:absolute;right:12px;top:50%;transform:translateY(-50%);
-      color:#6b7280;font-size:14px;pointer-events:none;
-    }
-    .field input:focus{border-color:#111;outline:none}
-    .field input[readonly]{background:#f3f4f6;color:#6b7280}
-    .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
-    .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
-    .btn.primary{background:#111;color:#fff}
-    .btn.cancel{background:#e5e7eb;color:#111}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="header"><h1>Edit ${title}</h1></div>
-      <div class="body">
-        ${fieldsHtml}
-      </div>
-      <div class="actions">
-        <button class="btn cancel" onclick="cancel()">Cancel</button>
-        <button class="btn primary" onclick="save()">Save</button>
-      </div>
-    </div>
-  </div>
-  <script>
-    // Original data from server
-    const original = ${objJson};
-
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-
-    function getFormData() {
-      const data = {};
-      document.querySelectorAll(".field").forEach(f => {
-        const label = f.querySelector("label").innerText;
-        const input = f.querySelector("input");
-        let value = input.value.trim();
-
-        // Re-add % for probability
-        if (f.classList.contains("percent-field")) {
-          value = value ? value + "%" : "";
-        }
-
-        data[label] = value;
-      });
-      return data;
-    }
-
-    function buildPrompt(current) {
-      const changed = [];
-      for (const key of Object.keys(original)) {
-        const oldVal = original[key];
-        const newVal = current[key] ?? "";
-        if (oldVal === newVal) continue;
-
-        const normOld = key.toLowerCase().includes("date") ? oldVal.split("T")[0] : oldVal;
-        const normNew = key.toLowerCase().includes("date") ? newVal.split("T")[0] : newVal;
-        if (normOld !== normNew) {
-          changed.push(\`\${key} from "\${normOld}" to "\${normNew}"\`);
-        }
-      }
-      if (changed.length === 0) return "No changes detected.";
-      const plural = changed.length > 1 ? "these fields" : "this field";
-      return \`Update \${plural}: \${changed.join("; ")}.\`;
-    }
-
-    function save() {
-      const current = getFormData();
-      const prompt = buildPrompt(current);
-      parent.postMessage({
-        type: "prompt",
-        payload: { prompt, params: { recordData: current } }
-      }, "*");
-    }
-
-    function cancel() {
-      parent.postMessage({ type: "action", payload: { action: "cancel" } }, "*");
-    }
-  </script>
-</body>
-</html>`;
-}
-
-/* --------------------------------------------------------------
-   3b. Records Table HTML (for viewing multiple records)
-   -------------------------------------------------------------- */
-export function recordsTableHtml(records: UIRecord[], objectType: string) {
-  const esc = (s: string) => {
-    return s.replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/"/g, '"');
-  };
-
-  if (records.length === 0) {
-    return `
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Records – ${objectType}</title>
-  <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:1024px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:20px;text-align:center;color:#6b7280}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="header"><h1>${objectType} Records</h1></div>
-      <div class="body">
-        <p>No records found.</p>
-      </div>
-    </div>
-  </div>
-  <script>
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-  </script>
-</body>
-</html>`;
-  }
-
-  // Get all field names from all records
-  const allFields = new Set<string>();
-  records.forEach(record => {
-    Object.keys(record).forEach(field => allFields.add(field));
-  });
-
-  const fields = Array.from(allFields).sort((a, b) => {
-    if (a === "Name") return -1;
-    if (b === "Name") return 1;
-    if (a === "Id") return 1;
-    if (b === "Id") return -1;
-    return a.localeCompare(b);
-  });
-
-  const tableRows = records
-    .map((record, index) => {
-      const actionCell = `<td class="action-cell"><button class="edit-btn" onclick="event.stopPropagation(); editRecord(${index})" title="Edit Record">Edit</button></td>`;
-
-      const cells = fields.map(field => {
-        const value = record[field] || "";
-        const displayValue = ((field: string, val: string) => {
-          if (val === "") return "";
-
-          // Format dates
-          if (field.toLowerCase().includes("date") && isIsoDate(val)) {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-            const d = new Date(val);
-            if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
-          }
-
-          // Format probability (if it has %)
-          if (field.toLowerCase().includes("probability") && val.endsWith("%")) {
-            return val;
-          }
-
-          // Try to parse JSON if it looks like an object
-          if (val.trim().startsWith("{") && val.trim().endsWith("}")) {
-            try {
-              const parsed = JSON.parse(val);
-              if (parsed && typeof parsed === "object") {
-                if (parsed.Name) return esc(parsed.Name);
-                if (parsed.name) return esc(parsed.name);
-                // If no Name, try to return the first string value
-                const firstVal = Object.values(parsed).find(v => typeof v === "string");
-                if (firstVal) return esc(String(firstVal));
-              }
-            } catch (e) {
-              // Ignore parse errors, treat as string
-            }
-          }
-
-          return esc(val);
-        })(field, value);
-
-        return `<td class="cell">${displayValue}</td>`;
-      }).join("");
-
-      // Safely inject record data for edit action
-      const recordJson = JSON.stringify(record)
-        .replace(/<\/script>/gi, "<\\/script>")
-        .replace(/<!--/g, "<\\!--");
-
-      return `<tr class="record-row" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
-    })
-    .join("\n");
-
-  const tableHeaders = [
-    '<th class="header-cell">Actions</th>',
-    ...fields.map(field => `<th class="header-cell">${esc(field)}</th>`)
-  ].join("");
-
-  // Safely inject all records for the script
-  const recordsJson = JSON.stringify(records)
-    .replace(/<\/script>/gi, "<\\/script>")
-    .replace(/<!--/g, "<\\!--");
-
-  return `
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Records – ${objectType}</title>
-  <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:1024px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:0}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
-    th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
-    .record-row{transition:background-color 0.15s}
-    .record-row:hover{background:#f9f9fb}
-    .record-row:first-child{border-bottom:1px solid #e5e7eb}
-    .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
-    .action-cell{text-align:center;width:80px}
-    .edit-btn{background:#111;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color 0.15s}
-    .edit-btn:hover{background:#333}
-    .edit-btn:active{background:#000}
-    .no-records{text-align:center;padding:40px;color:#6b7280}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="header"><h1>${objectType} Records</h1></div>
-      <div class="body">
-        <table>
-          <thead><tr>${tableHeaders}</tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  <script>
-    // All records data from server
-    const allRecords = ${recordsJson};
-
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-
-    function editRecord(recordIndex) {
-      const record = allRecords[recordIndex];
-      if (record) {
-        // Build prompt to open record in edit mode
-        const prompt = "Edit this " + (record.Name || "record") + " record.";
-
-        parent.postMessage({
-          type: "prompt",
-          payload: {
-            prompt,
-            params: { text: formatRecordForEdit(record) }
-          }
-        }, "*");
-      }
-    }
-
-    function formatRecordForEdit(record) {
-      let textContent = record.Name || "Record";
-
-      for (const [key, value] of Object.entries(record)) {
-        if (key !== "Name") {
-          textContent += "\\n* " + key + ": " + value;
-        }
-      }
-
-      return textContent;
-    }
-  </script>
-</body>
-</html>`;
-}
-
-/* --------------------------------------------------------------
-   3c. Read-Only Records Table HTML (for aggregate/analytical queries)
-   -------------------------------------------------------------- */
-export function readOnlyTableHtml(records: UIRecord[], title: string) {
-  const esc = (s: string) => {
-    return s.replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/"/g, '&quot;');
-  };
-
-  if (records.length === 0) {
-    return `
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Results – ${title}</title>
-  <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:1024px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:20px;text-align:center;color:#6b7280}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="header"><h1>${title}</h1></div>
-      <div class="body">
-        <p>No results found.</p>
-      </div>
-    </div>
-  </div>
-  <script>
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-  </script>
-</body>
-</html>`;
-  }
-
-  // Get all field names from all records
-  const allFields = new Set<string>();
-  records.forEach(record => {
-    Object.keys(record).forEach(field => allFields.add(field));
-  });
-
-  const fields = Array.from(allFields).sort((a, b) => {
-    if (a === "Name") return -1;
-    if (b === "Name") return 1;
-    if (a === "Id") return 1;
-    if (b === "Id") return -1;
-    return a.localeCompare(b);
-  });
-
-  const tableRows = records
-    .map((record) => {
-      const cells = fields.map(field => {
-        const value = record[field] || "";
-        const displayValue = ((field: string, val: string) => {
-          if (val === "") return "";
-
-          // Format dates
-          if (field.toLowerCase().includes("date") && isIsoDate(val)) {
-            if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
-            const d = new Date(val);
-            if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
-          }
-
-          // Format probability (if it has %)
-          if (field.toLowerCase().includes("probability") && val.endsWith("%")) {
-            return val;
-          }
-
-          // Try to parse JSON if it looks like an object
-          if (val.trim().startsWith("{") && val.trim().endsWith("}")) {
-            try {
-              const parsed = JSON.parse(val);
-              if (parsed && typeof parsed === "object") {
-                if (parsed.Name) return esc(parsed.Name);
-                if (parsed.name) return esc(parsed.name);
-                // If no Name, try to return the first string value
-                const firstVal = Object.values(parsed).find(v => typeof v === "string");
-                if (firstVal) return esc(String(firstVal));
-              }
-            } catch (e) {
-              // Ignore parse errors, treat as string
-            }
-          }
-
-          return esc(val);
-        })(field, value);
-
-        return `<td class="cell">${displayValue}</td>`;
-      }).join("");
-
-      return `<tr class="record-row">${cells}</tr>`;
-    })
-    .join("\n");
-
-  const tableHeaders = fields.map(field => `<th class="header-cell">${esc(field)}</th>`).join("");
-
-  return `
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Results – ${title}</title>
-  <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:1024px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:0}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
-    th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
-    .record-row{transition:background-color 0.15s}
-    .record-row:hover{background:#f9f9fb}
-    .record-row:first-child{border-bottom:1px solid #e5e7eb}
-    .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
-    .no-records{text-align:center;padding:40px;color:#6b7280}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div class="header"><h1>${title}</h1></div>
-      <div class="body">
-        <table>
-          <thead><tr>${tableHeaders}</tr></thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  <script>
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-  </script>
-</body>
-</html>`;
-}
-
-/* --------------------------------------------------------------
-   4. Tool Definition (MCP SDK format)
-   -------------------------------------------------------------- */
-export const EDIT_SINGLE_RECORD: Tool = {
-  name: "salesforce_edit_record",
-  description: `Edit a single Salesforce record using an interactive UI form. Use this tool when you want to modify, update, or edit record data with a visual form interface.
-
-ACTIVATE THIS TOOL when users say things like:
-• "Edit this record"
-• "Open [record] in edit mode/form/UI"
-• "Show [record] in editing form/interface"
-• "Modify/update [record] fields"
-• "Edit [record] values/data"
-
-The tool provides a dynamic web form with:
-• Smart input types (dates, text, numbers)
-• Field validation formatting
-• Save/Cancel functionality
-• Visual editing interface
-• Support for all standard and custom Salesforce fields
-
-Example usage: When a user wants to edit a contact's information, this tool opens an interactive form where they can modify field values visually rather than through text commands.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description: "JSON string or text representation of the record to edit. If JSON, should be a valid object string. If text, formatted as: 'ObjectName\\n\\n* Field1: value1...'"
-      }
-    },
-    required: ["text"]
-  }
-};
-
-/* --------------------------------------------------------------
-   5. Handler Function (following MCP server pattern)
-   -------------------------------------------------------------- */
-export async function handleEditSingleRecord(conn: any, args: EditRecordArgs) {
-  const { text } = args;
-
-  try {
-    let obj: UIRecord;
-    obj = parseObjectText(text);
-
-    const summary = Object.entries(obj)
-      .map(([k, v]) => `**${k}:** ${v}`)
-      .join("\n");
-
-    const objId = obj["Id"] || "new";
-
-    return {
-      content: [
-        { type: "text", text: summary },
-        createUIResource({
-          uri: `ui://record/edit/${encodeURIComponent(objId)}`,
-          content: { type: "rawHtml", htmlString: objectCardHtml(obj) },
-          encoding: "text",
-        }),
-      ],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{
-        type: "text",
-        text: `Error parsing object text: ${errorMessage}\n\nExpected format:\n\`\`\`\nObject Name\n\n* Id: record-id\n* Name: record-name\n* AnyField: value\n* AnotherField: value\n\`\`\``
-      }],
-      isError: true,
-    };
-  }
-}
-
-/* --------------------------------------------------------------
-   6. View Multiple Records Tool (Table format)
-   -------------------------------------------------------------- */
-export const VIEW_RECORDS_TABLE: Tool = {
-  name: "salesforce_view_records_table",
-  description: `Display multiple Salesforce records in a table view with edit functionality. Use this tool when you want to view, browse, or select from a list of records with the ability to edit individual records by clicking on them.
-
-ACTIVATE THIS TOOL when users say things like:
-• "Show me all records"
-• "Show me top 5 open opportunities by amount"
-• "View [records] in a table/list"
-• "List all [records] with edit option"
-• "Display [records] for selection/editing"
-• "Browse records and edit selected ones"
-
-The tool provides an interactive table with:
-• All records displayed in rows and columns
-• Action button in the first column to edit each individual record
-
-• Consistent styling with edit forms
-• Smart field formatting (dates, percentages, etc.)
-• Responsive design for different screen sizes
-
-Example usage: When a user wants to see a list of contacts or accounts and be able to edit specific ones, this tool displays them in an interactive table where clicking the "Edit" button in the first column opens the edit form.`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      records: {
-        type: "array",
-        items: {
-          type: "string"
-        },
-        description: "Array of JSON strings or text representations for records."
-      },
-      objectType: {
-        type: "string",
-        description: "The Salesforce object type (e.g., 'Account', 'Contact', 'Custom_Object__c') for display purposes"
-      }
-    },
-    required: ["records", "objectType"]
-  }
-};
-
-/* --------------------------------------------------------------
-   7. Handler Function for Table View
-   -------------------------------------------------------------- */
-export async function handleDisplayRecordsTable(conn: any, args: { records: string[], objectType: string }) {
-  const { records, objectType } = args;
-
-  try {
-    // Parse each record text into objects
-    const parsedRecords: UIRecord[] = records.map(text => parseObjectText(text));
-
-    const summary = `Found ${parsedRecords.length} ${objectType} record${parsedRecords.length === 1 ? '' : 's'}`;
-
-    const recordsId = parsedRecords.length > 0 ? parsedRecords[0]["Id"] : "table";
-
-    return {
-      content: [
-        { type: "text", text: summary },
-        createUIResource({
-          uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
-          content: { type: "rawHtml", htmlString: recordsTableHtml(parsedRecords, objectType) },
-          encoding: "text",
-        }),
-      ],
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{
-        type: "text",
-        text: `Error parsing records: ${errorMessage}\n\nExpected format: JSON string or text format`
-      }],
-      isError: true,
-    };
-  }
-}
-
-/* --------------------------------------------------------------
-   8. Record Detail Card (Read-only)
-   -------------------------------------------------------------- */
-export interface ViewRecordDetailArgs {
-  text: string;
-}
-
-export interface RecordSection {
-  header: string;
-  fields: Record<string, string>;
-}
-
-/* --------------------------------------------------------------
-   8a. Parse Record Detail Text with Sections
-   -------------------------------------------------------------- */
+/**
+ * Parse record detail text with sections
+ */
 function parseRecordDetailText(raw: string): { recordName: string; sections: RecordSection[]; description?: string } {
   const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
@@ -905,54 +376,418 @@ function parseRecordDetailText(raw: string): { recordName: string; sections: Rec
   };
 }
 
-/* --------------------------------------------------------------
-   8b. Generate Record Detail Card HTML
-   -------------------------------------------------------------- */
-export function recordDetailCardHtml(recordName: string, sections: RecordSection[], fullRecord: Record<string, string>, description?: string) {
-  const esc = (s: string) => {
-    return s.replace(/&/g, '&')
-      .replace(/</g, '<')
-      .replace(/"/g, '"');
-  };
+/* ==============================================================
+   HTML GENERATION FUNCTIONS
+   ============================================================== */
 
-  // Generate sections HTML
-  const sectionsHtml = sections.map(section => {
-    const fieldsHtml = Object.entries(section.fields)
-      .map(([fieldName, fieldValue]) => {
-        const displayValue = esc(fieldValue);
+/**
+ * Generate field HTML for edit form
+ */
+function generateFieldHtml(key: string, value: string, obj: UIRecord): string {
+  const id = key.replace(/\s+/g, "").toLowerCase();
+  const lowerKey = key.toLowerCase();
 
-        // Special formatting for different field types
-        const isWebsite = fieldName.toLowerCase().includes('website') && displayValue.startsWith('http');
-        const isEmail = fieldName.toLowerCase().includes('email') && displayValue.includes('@');
-        const isPhone = fieldName.toLowerCase().includes('phone');
-        const isId = fieldName.toLowerCase().includes('id') && /^[a-zA-Z0-9]{15,18}$/.test(displayValue);
+  const isId = lowerKey === "id" || lowerKey.endsWith("id");
+  const isDateField = lowerKey.includes("date");
+  const isProbabilityField = lowerKey.includes("probability");
+  const isAmountField = lowerKey.includes("amount") || lowerKey.includes("revenue");
 
-        let formattedValue = displayValue;
+  const forceText = isProbabilityField || isAmountField || isId;
+  let type = "text";
+  let inputValue = esc(value);
 
-        if (isWebsite) {
-          formattedValue = `<a href="${displayValue}" target="_blank" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
-        } else if (isEmail) {
-          formattedValue = `<a href="mailto:${displayValue}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
-        } else if (isPhone) {
-          formattedValue = `<a href="tel:${displayValue.replace(/[^\d+()-\s]/g, '')}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
-        } else if (isId) {
-          formattedValue = `<code style="font-family:monospace;background:#f3f4f6;padding:2px 4px;border-radius:3px;font-size:13px;">${displayValue}</code>`;
+  // Date fields: only if value is valid ISO date
+  if (!forceText && isDateField && isIsoDate(value)) {
+    type = "date";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) {
+        inputValue = d.toISOString().split("T")[0];
+      }
+    }
+  }
+
+  // Probability: strip % for editing
+  if (isProbabilityField && /%\s*$/.test(value)) {
+    inputValue = esc(value.replace(/%\s*$/, "").trim());
+  }
+
+  const readonly = isId ? 'readonly style="background:#f3f4f6"' : "";
+
+  const percentSymbol = isProbabilityField
+    ? `<span class="percent-symbol">%</span>`
+    : "";
+
+  return `
+    <div class="field ${isProbabilityField ? "percent-field" : ""}">
+      <label for="${id}">${esc(key)}</label>
+      <div class="input-wrapper">
+        <input type="${type}" id="${id}" value="${inputValue}" ${readonly}>
+        ${percentSymbol}
+      </div>
+    </div>`;
+}
+
+/**
+ * Generate edit form scripts
+ */
+function generateEditFormScripts(obj: UIRecord): string {
+  const objJson = safeJsonInject(obj);
+
+  return `
+    // Original data from server
+    const original = ${objJson};
+
+    ${RESIZE_OBSERVER_SCRIPT}
+
+    function getFormData() {
+      const data = {};
+      document.querySelectorAll(".field").forEach(f => {
+        const label = f.querySelector("label").innerText;
+        const input = f.querySelector("input");
+        let value = input.value.trim();
+
+        // Re-add % for probability
+        if (f.classList.contains("percent-field")) {
+          value = value ? value + "%" : "";
         }
 
-        return `
-          <div class="row">
-            <div class="label">${esc(fieldName)}</div>
-            <div class="value">${formattedValue}</div>
-          </div>`;
-      })
-      .join('');
+        data[label] = value;
+      });
+      return data;
+    }
 
-    return `
-      <div class="section">
-        <div class="section-header">${esc(section.header)}</div>
+    function buildPrompt(current) {
+      const changed = [];
+      for (const key of Object.keys(original)) {
+        const oldVal = original[key];
+        const newVal = current[key] ?? "";
+        if (oldVal === newVal) continue;
+
+        const normOld = key.toLowerCase().includes("date") ? oldVal.split("T")[0] : oldVal;
+        const normNew = key.toLowerCase().includes("date") ? newVal.split("T")[0] : newVal;
+        if (normOld !== normNew) {
+          changed.push(\`\${key} from "\${normOld}" to "\${normNew}"\`);
+        }
+      }
+      if (changed.length === 0) return "No changes detected.";
+      const plural = changed.length > 1 ? "these fields" : "this field";
+      return \`Update \${plural}: \${changed.join("; ")}.\`;
+    }
+
+    function save() {
+      const current = getFormData();
+      const prompt = buildPrompt(current);
+      parent.postMessage({
+        type: "prompt",
+        payload: { prompt, params: { recordData: current } }
+      }, "*");
+    }
+
+    function cancel() {
+      parent.postMessage({ type: "action", payload: { action: "cancel" } }, "*");
+    }
+  `;
+}
+
+/**
+ * Dynamic HTML Card (with smart input types)
+ */
+export function objectCardHtml(obj: UIRecord): string {
+  const sortedKeys = sortFields(Object.keys(obj));
+  const fieldsHtml = sortedKeys.map(key => generateFieldHtml(key, obj[key], obj)).join("\n");
+  const title = esc(obj.Name || "Object");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Edit – ${title}</title>
+  <style>
+    ${COMMON_STYLES}
+    ${EDIT_FORM_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>Edit ${title}</h1></div>
+      <div class="body">
         ${fieldsHtml}
-      </div>`;
-  }).join('');
+      </div>
+      <div class="actions">
+        <button class="btn cancel" onclick="cancel()">Cancel</button>
+        <button class="btn primary" onclick="save()">Save</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${generateEditFormScripts(obj)}
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Generate table row HTML
+ */
+function generateTableRow(record: UIRecord, fields: string[], index: number, includeActions: boolean = true): string {
+  const actionCell = includeActions
+    ? `<td class="action-cell"><button class="edit-btn" onclick="event.stopPropagation(); editRecord(${index})" title="Edit Record">Edit</button></td>`
+    : '';
+
+  const cells = fields.map(field => {
+    const value = record[field] || "";
+    const displayValue = formatDisplayValue(field, value);
+    return `<td class="cell">${displayValue}</td>`;
+  }).join("");
+
+  const recordJson = safeJsonInject(record);
+  return `<tr class="record-row" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
+}
+
+/**
+ * Generate table scripts
+ */
+function generateTableScripts(records: UIRecord[], includeEdit: boolean = true): string {
+  const recordsJson = safeJsonInject(records);
+
+  const editFunctions = includeEdit ? `
+    function editRecord(recordIndex) {
+      const record = allRecords[recordIndex];
+      if (record) {
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (record.Name || "record") + " record.";
+
+        parent.postMessage({
+          type: "prompt",
+          payload: {
+            prompt,
+            params: { text: formatRecordForEdit(record) }
+          }
+        }, "*");
+      }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
+    }
+  ` : '';
+
+  return `
+    // All records data from server
+    const allRecords = ${recordsJson};
+
+    ${RESIZE_OBSERVER_SCRIPT}
+
+    ${editFunctions}
+  `;
+}
+
+/**
+ * Records Table HTML (for viewing multiple records with edit)
+ */
+export function recordsTableHtml(records: UIRecord[], objectType: string): string {
+  if (records.length === 0) {
+    return generateEmptyStateHtml(`${objectType} Records`, "No records found.");
+  }
+
+  // Get all field names from all records
+  const allFields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record).forEach(field => allFields.add(field));
+  });
+
+  const fields = sortFields(Array.from(allFields));
+  const tableRows = records.map((record, index) => generateTableRow(record, fields, index, true)).join("\n");
+  const tableHeaders = [
+    '<th class="header-cell">Actions</th>',
+    ...fields.map(field => `<th class="header-cell">${esc(field)}</th>`)
+  ].join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Records – ${objectType}</title>
+  <style>
+    ${TABLE_STYLES}
+    ${TABLE_ACTION_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${objectType} Records</h1></div>
+      <div class="body">
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${generateTableScripts(records, true)}
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Read-Only Records Table HTML (for aggregate/analytical queries)
+ */
+export function readOnlyTableHtml(records: UIRecord[], title: string): string {
+  if (records.length === 0) {
+    return generateEmptyStateHtml(title, "No results found.");
+  }
+
+  // Get all field names from all records
+  const allFields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record).forEach(field => allFields.add(field));
+  });
+
+  const fields = sortFields(Array.from(allFields));
+  const tableRows = records.map((record) => generateTableRow(record, fields, 0, false)).join("\n");
+  const tableHeaders = fields.map(field => `<th class="header-cell">${esc(field)}</th>`).join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Results – ${title}</title>
+  <style>
+    ${TABLE_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${title}</h1></div>
+      <div class="body">
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${RESIZE_OBSERVER_SCRIPT}
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Format field value with special formatting for different types
+ */
+function formatFieldValue(fieldName: string, fieldValue: string): string {
+  const displayValue = esc(fieldValue);
+
+  // Special formatting for different field types
+  const isWebsite = fieldName.toLowerCase().includes('website') && displayValue.startsWith('http');
+  const isEmail = fieldName.toLowerCase().includes('email') && displayValue.includes('@');
+  const isPhone = fieldName.toLowerCase().includes('phone');
+  const isId = fieldName.toLowerCase().includes('id') && /^[a-zA-Z0-9]{15,18}$/.test(displayValue);
+
+  if (isWebsite) {
+    return `<a href="${displayValue}" target="_blank" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isEmail) {
+    return `<a href="mailto:${displayValue}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isPhone) {
+    return `<a href="tel:${displayValue.replace(/[^\d+()-\s]/g, '')}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isId) {
+    return `<code style="font-family:monospace;background:#f3f4f6;padding:2px 4px;border-radius:3px;font-size:13px;">${displayValue}</code>`;
+  }
+
+  return displayValue;
+}
+
+/**
+ * Generate section HTML for detail card
+ */
+function generateSectionHtml(section: RecordSection): string {
+  const fieldsHtml = Object.entries(section.fields)
+    .map(([fieldName, fieldValue]) => {
+      const formattedValue = formatFieldValue(fieldName, fieldValue);
+      return `
+        <div class="row">
+          <div class="label">${esc(fieldName)}</div>
+          <div class="value">${formattedValue}</div>
+        </div>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <div class="section-header">${esc(section.header)}</div>
+      ${fieldsHtml}
+    </div>`;
+}
+
+/**
+ * Generate detail card scripts
+ */
+function generateDetailCardScripts(fullRecord: Record<string, string>): string {
+  const fullRecordJson = safeJsonInject(fullRecord);
+
+  return `
+    // Full record data
+    const fullRecord = ${fullRecordJson};
+
+    ${RESIZE_OBSERVER_SCRIPT}
+
+    function editRecord() {
+      if (fullRecord) {
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (fullRecord.Name || "record") + " record.";
+
+        parent.postMessage({
+          type: "prompt",
+          payload: {
+            prompt,
+            params: { text: formatRecordForEdit(fullRecord) }
+          }
+        }, "*");
+      }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
+    }
+  `;
+}
+
+/**
+ * Record Detail Card HTML (Read-only)
+ */
+export function recordDetailCardHtml(recordName: string, sections: RecordSection[], fullRecord: Record<string, string>, description?: string): string {
+  // Generate sections HTML
+  const sectionsHtml = sections.map(section => generateSectionHtml(section)).join('');
 
   // Description section if present
   const descriptionHtml = description ? `
@@ -960,10 +795,6 @@ export function recordDetailCardHtml(recordName: string, sections: RecordSection
       <div class="section-header">Description</div>
       <div class="description">${esc(description)}</div>
     </div>` : '';
-
-  const fullRecordJson = JSON.stringify(fullRecord)
-    .replace(/<\/script>/gi, "<\\/script>")
-    .replace(/<!--/g, "<\\!--");
 
   return `
 <!DOCTYPE html>
@@ -978,7 +809,6 @@ export function recordDetailCardHtml(recordName: string, sections: RecordSection
     .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
     .header {
       background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color: white;
       color: white;
       padding: 20px;
       text-align: center;
@@ -1069,54 +899,87 @@ export function recordDetailCardHtml(recordName: string, sections: RecordSection
     </div>
   </div>
   <script>
-    // Full record data
-    const fullRecord = ${fullRecordJson};
-
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
-
-    function editRecord() {
-      if (fullRecord) {
-        // Build prompt to open record in edit mode
-        const prompt = "Edit this " + (fullRecord.Name || "record") + " record.";
-
-        parent.postMessage({
-          type: "prompt",
-          payload: {
-            prompt,
-            params: { text: formatRecordForEdit(fullRecord) }
-          }
-        }, "*");
-      }
-    }
-
-    function formatRecordForEdit(record) {
-      let textContent = record.Name || "Record";
-
-      for (const [key, value] of Object.entries(record)) {
-        if (key !== "Name") {
-          textContent += "\\n* " + key + ": " + value;
-        }
-      }
-
-      return textContent;
-    }
+    ${generateDetailCardScripts(fullRecord)}
   </script>
 </body>
 </html>`;
 }
 
-/* --------------------------------------------------------------
-   8c. Record Detail Tool Definition
-   -------------------------------------------------------------- */
+/* ==============================================================
+   TOOL DEFINITIONS
+   ============================================================== */
+
+export const EDIT_SINGLE_RECORD: Tool = {
+  name: "salesforce_edit_record",
+  description: `Edit a single Salesforce record using an interactive UI form. Use this tool when you want to modify, update, or edit record data with a visual form interface.
+
+ACTIVATE THIS TOOL when users say things like:
+• "Edit this record"
+• "Open [record] in edit mode/form/UI"
+• "Show [record] in editing form/interface"
+• "Modify/update [record] fields"
+• "Edit [record] values/data"
+
+The tool provides a dynamic web form with:
+• Smart input types (dates, text, numbers)
+• Field validation formatting
+• Save/Cancel functionality
+• Visual editing interface
+• Support for all standard and custom Salesforce fields
+
+Example usage: When a user wants to edit a contact's information, this tool opens an interactive form where they can modify field values visually rather than through text commands.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "JSON string or text representation of the record to edit. If JSON, should be a valid object string. If text, formatted as: 'ObjectName\\n\\n* Field1: value1...'"
+      }
+    },
+    required: ["text"]
+  }
+};
+
+export const VIEW_RECORDS_TABLE: Tool = {
+  name: "salesforce_view_records_table",
+  description: `Display multiple Salesforce records in a table view with edit functionality. Use this tool when you want to view, browse, or select from a list of records with the ability to edit individual records by clicking on them.
+
+ACTIVATE THIS TOOL when users say things like:
+• "Show me all records"
+• "Show me top 5 open opportunities by amount"
+• "View [records] in a table/list"
+• "List all [records] with edit option"
+• "Display [records] for selection/editing"
+• "Browse records and edit selected ones"
+
+The tool provides an interactive table with:
+• All records displayed in rows and columns
+• Action button in the first column to edit each individual record
+
+• Consistent styling with edit forms
+• Smart field formatting (dates, percentages, etc.)
+• Responsive design for different screen sizes
+
+Example usage: When a user wants to see a list of contacts or accounts and be able to edit specific ones, this tool displays them in an interactive table where clicking the "Edit" button in the first column opens the edit form.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      records: {
+        type: "array",
+        items: {
+          type: "string"
+        },
+        description: "Array of JSON strings or text representations for records."
+      },
+      objectType: {
+        type: "string",
+        description: "The Salesforce object type (e.g., 'Account', 'Contact', 'Custom_Object__c') for display purposes"
+      }
+    },
+    required: ["records", "objectType"]
+  }
+};
+
 export const VIEW_RECORD_DETAIL: Tool = {
   name: "salesforce_view_record_detail",
   description: `Display a single Salesforce record in a detailed, read-only card format. Use this tool when you want to view comprehensive record information in an attractive, organized layout with sections and proper formatting.
@@ -1149,9 +1012,78 @@ Example usage: When a user wants to see detailed information about an account or
   }
 };
 
-/* --------------------------------------------------------------
-   8d. Handler Function for Record Detail Card
-   -------------------------------------------------------------- */
+/* ==============================================================
+   HANDLER FUNCTIONS
+   ============================================================== */
+
+export async function handleEditSingleRecord(conn: any, args: EditRecordArgs) {
+  const { text } = args;
+
+  try {
+    let obj: UIRecord;
+    obj = parseObjectText(text);
+
+    const summary = Object.entries(obj)
+      .map(([k, v]) => `**${k}:** ${v}`)
+      .join("\n");
+
+    const objId = obj["Id"] || "new";
+
+    return {
+      content: [
+        { type: "text", text: summary },
+        createUIResource({
+          uri: `ui://record/edit/${encodeURIComponent(objId)}`,
+          content: { type: "rawHtml", htmlString: objectCardHtml(obj) },
+          encoding: "text",
+        }),
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{
+        type: "text",
+        text: `Error parsing object text: ${errorMessage}\n\nExpected format:\n\`\`\`\nObject Name\n\n* Id: record-id\n* Name: record-name\n* AnyField: value\n* AnotherField: value\n\`\`\``
+      }],
+      isError: true,
+    };
+  }
+}
+
+export async function handleDisplayRecordsTable(conn: any, args: { records: string[], objectType: string }) {
+  const { records, objectType } = args;
+
+  try {
+    // Parse each record text into objects
+    const parsedRecords: UIRecord[] = records.map(text => parseObjectText(text));
+
+    const summary = `Found ${parsedRecords.length} ${objectType} record${parsedRecords.length === 1 ? '' : 's'}`;
+
+    const recordsId = parsedRecords.length > 0 ? parsedRecords[0]["Id"] : "table";
+
+    return {
+      content: [
+        { type: "text", text: summary },
+        createUIResource({
+          uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+          content: { type: "rawHtml", htmlString: recordsTableHtml(parsedRecords, objectType) },
+          encoding: "text",
+        }),
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{
+        type: "text",
+        text: `Error parsing records: ${errorMessage}\n\nExpected format: JSON string or text format`
+      }],
+      isError: true,
+    };
+  }
+}
+
 export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailArgs) {
   const { text } = args;
 
@@ -1160,13 +1092,14 @@ export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailAr
 
     const summary = `Displaying detailed view for: ${recordName}`;
 
-    const recordId = recordName.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-
     // Construct full record object from sections
     const fullRecord: Record<string, string> = { Name: recordName };
     for (const section of sections) {
       Object.assign(fullRecord, section.fields);
     }
+
+    // Use actual Salesforce ID if available (case-sensitive), otherwise sanitize recordName
+    const recordId = fullRecord.Id || recordName.replace(/[^a-zA-Z0-9]/g, '_');
 
     return {
       content: [
@@ -1190,9 +1123,6 @@ export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailAr
   }
 }
 
-/* --------------------------------------------------------------
-   9. Convert Salesforce Records to UI Format
-   -------------------------------------------------------------- */
 /**
  * Converts Salesforce query result records to UIRecord format and generates
  * appropriate UI resources (detail card for single record, table for multiple).
