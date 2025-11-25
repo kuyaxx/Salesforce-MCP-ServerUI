@@ -1,7 +1,7 @@
 {
-    "name": "@tsmztech/mcp-server-salesforce",
-    "version": "0.0.6",
-    "description": "A Salesforce connector MCP Server.",
+    "name": "@kuyaxx/salesforce-mcp-server-ui",
+    "version": "0.0.7",
+    "description": "Salesforce MCP Server with MCP-UI support.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "type": "module",
@@ -20,10 +20,16 @@
     "keywords": [
       "mcp",
       "salesforce",
+      "mcp-ui",
+      "ui",
       "claude",
       "ai"
     ],
-    "author": "tsmztech",
+    "author": "kuyaxx (forked from tsmztech/mcp-server-salesforce)",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/kuyaxx/Salesforce-MCP-ServerUI.git"
+    },
     "license": "MIT",
     "dependencies": {
       "@modelcontextprotocol/sdk": "1.21.1",
@@ -50,4 +56,3 @@
       "vitest": "^4.0.13"
     }
   }
-  
