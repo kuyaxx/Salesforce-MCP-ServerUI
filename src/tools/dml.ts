@@ -47,7 +47,7 @@ export async function handleDMLRecords(conn: any, args: DMLArgs) {
   const { operation, objectName, records, externalIdField } = args;
 
   let result: DMLResult | DMLResult[];
-  
+
   switch (operation) {
     case 'insert':
       result = await conn.sobject(objectName).create(records);
@@ -70,51 +70,11 @@ export async function handleDMLRecords(conn: any, args: DMLArgs) {
 
   // Format DML results
   const results = Array.isArray(result) ? result : [result];
-  const successCount = results.filter(r => r.success).length;
-  const failureCount = results.length - successCount;
-
-  let responseText = `${operation.toUpperCase()} operation completed.\n`;
-  responseText += `Processed ${results.length} records:\n`;
-  responseText += `- Successful: ${successCount}\n`;
-  responseText += `- Failed: ${failureCount}\n\n`;
-
-  if (failureCount > 0) {
-    responseText += 'Errors:\n';
-    results.forEach((r: DMLResult, idx: number) => {
-      if (!r.success && r.errors) {
-        responseText += `Record ${idx + 1}:\n`;
-        if (Array.isArray(r.errors)) {
-          r.errors.forEach((error) => {
-            responseText += `  - ${error.message}`;
-            if (error.statusCode) {
-              responseText += ` [${error.statusCode}]`;
-            }
-            if (error.fields && error.fields.length > 0) {
-              responseText += `\n    Fields: ${error.fields.join(', ')}`;
-            }
-            responseText += '\n';
-          });
-        } else {
-          // Single error object
-          const error = r.errors;
-          responseText += `  - ${error.message}`;
-          if (error.statusCode) {
-            responseText += ` [${error.statusCode}]`;
-          }
-          if (error.fields) {
-            const fields = Array.isArray(error.fields) ? error.fields.join(', ') : error.fields;
-            responseText += `\n    Fields: ${fields}`;
-          }
-          responseText += '\n';
-        }
-      }
-    });
-  }
 
   return {
     content: [{
       type: "text",
-      text: responseText
+      text: JSON.stringify(results, null, 2)
     }],
     isError: false,
   };

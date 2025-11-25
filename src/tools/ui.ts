@@ -1,63 +1,130 @@
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createUIResource } from "@mcp-ui/server";
 
-/* --------------------------------------------------------------
-   TYPES
-   -------------------------------------------------------------- */
+/* ==============================================================
+   TYPES & INTERFACES
+   ============================================================== */
 export interface EditRecordArgs {
   text: string;
 }
 
-type Object = Record<string, string>;
+export interface ViewRecordsArgs {
+  records: string[];
+}
 
-/* --------------------------------------------------------------
+export interface ViewRecordDetailArgs {
+  text: string;
+}
+
+export interface RecordSection {
+  header: string;
+  fields: Record<string, string>;
+}
+
+export type UIRecord = Record<string, string>;
+
+/* ==============================================================
    CONSTANTS
-   -------------------------------------------------------------- */
+   ============================================================== */
 const REQUIRED_FIELDS = [
   "Name",
   "Id",
 ] as const;
 
-/* --------------------------------------------------------------
-   1. Parse → de-duplicate + keep original casing
-   -------------------------------------------------------------- */
-function parseObjectText(raw: string): Object {
-  const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const nameLine = lines.find(l => !l.startsWith("*"));
-  if (!nameLine) throw new Error("Missing object name (first non-bullet line).");
+// Shared CSS Styles
+const COMMON_STYLES = `
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+  .wrap{max-width:720px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+  .header{padding:16px 20px;border-bottom:1px solid #eee}
+  .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+  .body{padding:20px}
+`;
 
-  const fieldMap = new Map<string, string>(); // lower → original label
-  const valueMap = new Map<string, string>(); // lower → value (last wins)
+const TABLE_STYLES = `
+  body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+  .wrap{max-width:1024px;margin:0 auto;padding:16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+  .header{padding:16px 20px;border-bottom:1px solid #eee}
+  .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
+  .body{padding:0}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:12px 16px;text-align:left;border-bottom:1px solid #f3f4f6}
+  th{font-weight:600;color:#374151;font-size:14px;background:#f9f9fb}
+  .record-row{transition:background-color 0.15s}
+  .record-row:hover{background:#f9f9fb}
+  .record-row:first-child{border-bottom:1px solid #e5e7eb}
+  .cell{font-size:14px;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .header-cell{font-size:12px;text-transform:uppercase;letter-spacing:0.05em}
+  .no-records{text-align:center;padding:40px;color:#6b7280}
+`;
 
-  for (const line of lines) {
-    if (!line.startsWith("*")) continue;
-    const m = line.match(/^\*\s*([^:]+):\s*(.+)$/);
-    if (!m) continue;
-    const rawKey = m[1].trim();
-    const value = m[2].trim();
-    const lower = rawKey.toLowerCase();
-    fieldMap.set(lower, rawKey);
-    valueMap.set(lower, value);
+const EDIT_FORM_STYLES = `
+  .field{margin-bottom:16px;position:relative}
+  .field label{display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:4px}
+  .input-wrapper{position:relative}
+  .field input[type=text],.field input[type=date]{
+    width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;
+    font-size:15px;background:#fff;color:#111;box-sizing:border-box;
   }
-
-  const missing = REQUIRED_FIELDS.filter(f => !fieldMap.has(f.toLowerCase()));
-  if (missing.length) throw new Error(`Missing required fields: ${missing.join(", ")}`);
-
-  const obj: Object = { Name: nameLine };
-  for (const [lower, value] of valueMap.entries()) {
-    const label = fieldMap
-      .get(lower)!
-      .split(/[\s_]+/)
-      .map(w => w[0].toUpperCase() + w.slice(1).toLowerCase())
-      .join(" ");
-    obj[label] = value;
+  .percent-field input{padding-right:32px}
+  .percent-symbol{
+    position:absolute;right:12px;top:50%;transform:translateY(-50%);
+    color:#6b7280;font-size:14px;pointer-events:none;
   }
-  return obj;
+  .field input:focus{border-color:#111;outline:none}
+  .field input[readonly]{background:#f3f4f6;color:#6b7280}
+  .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
+  .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
+  .btn.primary{background:#111;color:#fff}
+  .btn.cancel{background:#e5e7eb;color:#111}
+`;
+
+const TABLE_ACTION_STYLES = `
+  .action-cell{text-align:center;width:80px}
+  .edit-btn{background:#111;color:#fff;border:0;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:500;cursor:pointer;transition:background-color 0.15s}
+  .edit-btn:hover{background:#333}
+  .edit-btn:active{background:#000}
+`;
+
+// Shared Scripts
+const RESIZE_OBSERVER_SCRIPT = `
+  const observer = new ResizeObserver(es => {
+    for (const e of es) {
+      parent.postMessage(
+        { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
+        "*"
+      );
+    }
+  });
+  observer.observe(document.documentElement);
+`;
+
+/* ==============================================================
+   UTILITY FUNCTIONS
+   ============================================================== */
+
+/**
+ * HTML escape function - prevents XSS attacks
+ */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;');
 }
 
-/* --------------------------------------------------------------
-   2. Strict ISO Date Check (excludes %, $, numbers, etc.)
-   -------------------------------------------------------------- */
+/**
+ * Safely inject JSON into HTML script tags
+ */
+function safeJsonInject(obj: any): string {
+  return JSON.stringify(obj)
+    .replace(/<\/script>/gi, "<\\/script>")
+    .replace(/<!--/g, "<\\!--");
+}
+
+/**
+ * Strict ISO Date Check (excludes %, $, numbers, etc.)
+ */
 function isIsoDate(value: string): boolean {
   const trimmed = value.trim();
 
@@ -80,138 +147,298 @@ function isIsoDate(value: string): boolean {
   return year >= 1900 && year <= 2100;
 }
 
-/* --------------------------------------------------------------
-   3. Dynamic HTML Card (with smart input types)
-   -------------------------------------------------------------- */
-function objectCardHtml(obj: Object) {
-  const esc = (s: string) => {
-    return s.replace(/&/g, '&')
-            .replace(/</g, '<')
-            .replace(/"/g, '"');
-  };
+/**
+ * Format display value for table cells
+ */
+function formatDisplayValue(field: string, value: string): string {
+  if (value === "") return "";
 
-  const sortedKeys = Object.keys(obj).sort((a, b) => {
+  // Format dates
+  if (field.toLowerCase().includes("date") && isIsoDate(value)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) return d.toISOString().split("T")[0];
+  }
+
+  // Format probability (if it has %)
+  if (field.toLowerCase().includes("probability") && value.endsWith("%")) {
+    return value;
+  }
+
+  // Try to parse JSON if it looks like an object
+  if (value.trim().startsWith("{") && value.trim().endsWith("}")) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === "object") {
+        if (parsed.Name) return esc(parsed.Name);
+        if (parsed.name) return esc(parsed.name);
+        // If no Name, try to return the first string value
+        const firstVal = Object.values(parsed).find(v => typeof v === "string");
+        if (firstVal) return esc(String(firstVal));
+      }
+    } catch (e) {
+      // Ignore parse errors, treat as string
+    }
+  }
+
+  return esc(value);
+}
+
+/**
+ * Format record for edit mode (used in multiple places)
+ */
+function formatRecordForEdit(record: UIRecord): string {
+  let textContent = record.Name || "Record";
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key !== "Name") {
+      textContent += "\\n* " + key + ": " + value;
+    }
+  }
+
+  return textContent;
+}
+
+/**
+ * Sort fields with Name first, Id last
+ */
+function sortFields(fields: string[]): string[] {
+  return fields.sort((a, b) => {
+    if (a === "Name") return -1;
+    if (b === "Name") return 1;
     if (a === "Id") return 1;
     if (b === "Id") return -1;
     return a.localeCompare(b);
   });
+}
 
-  const fieldsHtml = sortedKeys
-    .map(key => {
-      const value = obj[key];
-      const id = key.replace(/\s+/g, "").toLowerCase();
-      const lowerKey = key.toLowerCase();
-
-      const isId = lowerKey === "id";
-      const isDateField = lowerKey.includes("date");
-      const isProbabilityField = lowerKey.includes("probability");
-      const isAmountField = lowerKey.includes("amount") || lowerKey.includes("revenue");
-
-      const forceText = isProbabilityField || isAmountField || isId;
-      let type = "text";
-      let inputValue = esc(value);
-
-      // Date fields: only if value is valid ISO date
-      if (!forceText && isDateField && isIsoDate(value)) {
-        type = "date";
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-          const d = new Date(value);
-          if (!isNaN(d.getTime())) {
-            inputValue = d.toISOString().split("T")[0];
-          }
-        }
-      }
-
-      // Probability: strip % for editing
-      if (isProbabilityField && /%\s*$/.test(value)) {
-        inputValue = esc(value.replace(/%\s*$/, "").trim());
-      }
-
-      const readonly = isId ? 'readonly style="background:#f3f4f6"' : "";
-
-      const percentSymbol = isProbabilityField
-        ? `<span class="percent-symbol">%</span>`
-        : "";
-
-      return `
-        <div class="field ${isProbabilityField ? "percent-field" : ""}">
-          <label for="${id}">${esc(key)}</label>
-          <div class="input-wrapper">
-            <input type="${type}" id="${id}" value="${inputValue}" ${readonly}>
-            ${percentSymbol}
-          </div>
-        </div>`;
-    })
-    .join("\n");
-
-  const title = esc(obj.Name || "Object");
-
-  // Safely inject original data
-  const objJson = JSON.stringify(obj)
-    .replace(/<\/script>/gi, "<\\/script>")
-    .replace(/<!--/g, "<\\!--");
-
+/**
+ * Generate empty state HTML
+ */
+function generateEmptyStateHtml(title: string, message: string): string {
   return `
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Edit – ${title}</title>
+  <title>${title}</title>
   <style>
-    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
-    .wrap{max-width:720px;margin:0 auto;padding:16px}
-    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
-    .header{padding:16px 20px;border-bottom:1px solid #eee}
-    .header h1{margin:0;font-size:18px;font-weight:600;color:#111}
-    .body{padding:20px}
-    .field{margin-bottom:16px;position:relative}
-    .field label{display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:4px}
-    .input-wrapper{position:relative}
-    .field input[type=text],.field input[type=date]{
-      width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;
-      font-size:15px;background:#fff;color:#111;box-sizing:border-box;
-    }
-    .percent-field input{padding-right:32px}
-    .percent-symbol{
-      position:absolute;right:12px;top:50%;transform:translateY(-50%);
-      color:#6b7280;font-size:14px;pointer-events:none;
-    }
-    .field input:focus{border-color:#111;outline:none}
-    .field input[readonly]{background:#f3f4f6;color:#6b7280}
-    .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
-    .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
-    .btn.primary{background:#111;color:#fff}
-    .btn.cancel{background:#e5e7eb;color:#111}
+    ${COMMON_STYLES}
+    .body{padding:20px;text-align:center;color:#6b7280}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="header"><h1>Edit ${title}</h1></div>
+      <div class="header"><h1>${title}</h1></div>
       <div class="body">
-        ${fieldsHtml}
-      </div>
-      <div class="actions">
-        <button class="btn cancel" onclick="cancel()">Cancel</button>
-        <button class="btn primary" onclick="save()">Save</button>
+        <p>${message}</p>
       </div>
     </div>
   </div>
   <script>
+    ${RESIZE_OBSERVER_SCRIPT}
+  </script>
+</body>
+</html>`;
+}
+
+/* ==============================================================
+   PARSING FUNCTIONS
+   ============================================================== */
+
+/**
+ * Parse object text (JSON or text format) → UIRecord
+ */
+export function parseObjectText(raw: string): UIRecord {
+  try {
+    // Try parsing as JSON first
+    const parsed = JSON.parse(raw);
+
+    // Handle array input (take first item)
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) throw new Error("Empty array provided");
+      return parsed[0];
+    }
+
+    // Handle single object
+    if (typeof parsed === 'object' && parsed !== null) {
+      // Convert all values to strings to match Object type definition
+      const sanitized: UIRecord = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (value === null || value === undefined) {
+          sanitized[key] = '';
+        } else if (typeof value === 'object') {
+          sanitized[key] = JSON.stringify(value);
+        } else {
+          sanitized[key] = String(value);
+        }
+      }
+      return sanitized;
+    }
+  } catch (e) {
+    // Fallback to text parsing if JSON parse fails
+    // This maintains backward compatibility for text-based inputs
+  }
+
+  const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const nameLine = lines.find(l => !l.startsWith("*"));
+  if (!nameLine) throw new Error("Missing object name (first non-bullet line).");
+
+  const fieldMap = new Map<string, string>(); // lower → original label
+  const valueMap = new Map<string, string>(); // lower → value (last wins)
+
+  for (const line of lines) {
+    if (!line.startsWith("*")) continue;
+    const m = line.match(/^\*\s*([^:]+):\s*(.+)$/);
+    if (!m) continue;
+    const rawKey = m[1].trim();
+    const value = m[2].trim();
+    const lower = rawKey.toLowerCase();
+    fieldMap.set(lower, rawKey);
+    valueMap.set(lower, value);
+  }
+
+  const missing = REQUIRED_FIELDS.filter(f => !fieldMap.has(f.toLowerCase()));
+  if (missing.length) throw new Error(`Missing required fields: ${missing.join(", ")}`);
+
+  const obj: UIRecord = { Name: nameLine };
+  for (const [lower, value] of valueMap.entries()) {
+    const label = fieldMap
+      .get(lower)!
+      .split(/[\s_]+/)
+      .map(w => w[0].toUpperCase() + w.slice(1).toLowerCase())
+      .join(" ");
+    obj[label] = value;
+  }
+  return obj;
+}
+
+/**
+ * Parse record detail text with sections
+ */
+function parseRecordDetailText(raw: string): { recordName: string; sections: RecordSection[]; description?: string } {
+  const lines = raw.trim().split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  if (lines.length === 0) {
+    throw new Error("No content provided");
+  }
+
+  // Extract record name (first line, can contain parenthetical notes)
+  let recordName = lines[0].replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+  const sections: RecordSection[] = [];
+  let currentSection: RecordSection | null = null;
+  let description: string | undefined;
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check if this is a section header (ends with colon and might contain parenthetical notes)
+    if (line.endsWith(':') && !line.startsWith('*')) {
+      // Extract clean section header
+      const header = line.replace(/:\s*$/, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+      // Save previous section if exists
+      if (currentSection) {
+        sections.push(currentSection);
+      }
+
+      // Start new section
+      currentSection = {
+        header,
+        fields: {}
+      };
+    } else if (currentSection && line.startsWith('*')) {
+      // This is a field in the current section
+      const m = line.match(/^\*\s*([^:]+):\s*(.+)$/);
+      if (m) {
+        const fieldName = m[1].trim();
+        const fieldValue = m[2].trim();
+        currentSection.fields[fieldName] = fieldValue;
+      }
+    } else if (!currentSection && !line.startsWith('*') && line.length > 50) {
+      // This might be a description (long text without asterisk or colon)
+      description = line;
+    }
+  }
+
+  // Add the last section
+  if (currentSection) {
+    sections.push(currentSection);
+  }
+
+  return {
+    recordName,
+    sections,
+    description
+  };
+}
+
+/* ==============================================================
+   HTML GENERATION FUNCTIONS
+   ============================================================== */
+
+/**
+ * Generate field HTML for edit form
+ */
+function generateFieldHtml(key: string, value: string, obj: UIRecord): string {
+  const id = key.replace(/\s+/g, "").toLowerCase();
+  const lowerKey = key.toLowerCase();
+
+  const isId = lowerKey === "id" || lowerKey.endsWith("id");
+  const isDateField = lowerKey.includes("date");
+  const isProbabilityField = lowerKey.includes("probability");
+  const isAmountField = lowerKey.includes("amount") || lowerKey.includes("revenue");
+
+  const forceText = isProbabilityField || isAmountField || isId;
+  let type = "text";
+  let inputValue = esc(value);
+
+  // Date fields: only if value is valid ISO date
+  if (!forceText && isDateField && isIsoDate(value)) {
+    type = "date";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const d = new Date(value);
+      if (!isNaN(d.getTime())) {
+        inputValue = d.toISOString().split("T")[0];
+      }
+    }
+  }
+
+  // Probability: strip % for editing
+  if (isProbabilityField && /%\s*$/.test(value)) {
+    inputValue = esc(value.replace(/%\s*$/, "").trim());
+  }
+
+  const readonly = isId ? 'readonly style="background:#f3f4f6"' : "";
+
+  const percentSymbol = isProbabilityField
+    ? `<span class="percent-symbol">%</span>`
+    : "";
+
+  return `
+    <div class="field ${isProbabilityField ? "percent-field" : ""}">
+      <label for="${id}">${esc(key)}</label>
+      <div class="input-wrapper">
+        <input type="${type}" id="${id}" value="${inputValue}" ${readonly}>
+        ${percentSymbol}
+      </div>
+    </div>`;
+}
+
+/**
+ * Generate edit form scripts
+ */
+function generateEditFormScripts(obj: UIRecord): string {
+  const objJson = safeJsonInject(obj);
+
+  return `
     // Original data from server
     const original = ${objJson};
 
-    // Resize observer
-    const observer = new ResizeObserver(es => {
-      for (const e of es) {
-        parent.postMessage(
-          { type: "ui-size-change", payload: { height: e.contentRect.height + 16 } },
-          "*"
-        );
-      }
-    });
-    observer.observe(document.documentElement);
+    ${RESIZE_OBSERVER_SCRIPT}
 
     function getFormData() {
       const data = {};
@@ -260,14 +487,428 @@ function objectCardHtml(obj: Object) {
     function cancel() {
       parent.postMessage({ type: "action", payload: { action: "cancel" } }, "*");
     }
+  `;
+}
+
+/**
+ * Dynamic HTML Card (with smart input types)
+ */
+export function objectCardHtml(obj: UIRecord): string {
+  const sortedKeys = sortFields(Object.keys(obj));
+  const fieldsHtml = sortedKeys.map(key => generateFieldHtml(key, obj[key], obj)).join("\n");
+  const title = esc(obj.Name || "Object");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Edit – ${title}</title>
+  <style>
+    ${COMMON_STYLES}
+    ${EDIT_FORM_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>Edit ${title}</h1></div>
+      <div class="body">
+        ${fieldsHtml}
+      </div>
+      <div class="actions">
+        <button class="btn cancel" onclick="cancel()">Cancel</button>
+        <button class="btn primary" onclick="save()">Save</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${generateEditFormScripts(obj)}
   </script>
 </body>
 </html>`;
 }
 
-/* --------------------------------------------------------------
-   4. Tool Definition (MCP SDK format)
-   -------------------------------------------------------------- */
+/**
+ * Generate table row HTML
+ */
+function generateTableRow(record: UIRecord, fields: string[], index: number, includeActions: boolean = true): string {
+  const actionCell = includeActions
+    ? `<td class="action-cell"><button class="edit-btn" onclick="event.stopPropagation(); editRecord(${index})" title="Edit Record">Edit</button></td>`
+    : '';
+
+  const cells = fields.map(field => {
+    const value = record[field] || "";
+    const displayValue = formatDisplayValue(field, value);
+    return `<td class="cell">${displayValue}</td>`;
+  }).join("");
+
+  const recordJson = safeJsonInject(record);
+  return `<tr class="record-row" data-record='${recordJson}'>${actionCell}${cells}</tr>`;
+}
+
+/**
+ * Generate table scripts
+ */
+function generateTableScripts(records: UIRecord[], includeEdit: boolean = true): string {
+  const recordsJson = safeJsonInject(records);
+
+  const editFunctions = includeEdit ? `
+    function editRecord(recordIndex) {
+      const record = allRecords[recordIndex];
+      if (record) {
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (record.Name || "record") + " record.";
+
+        parent.postMessage({
+          type: "prompt",
+          payload: {
+            prompt,
+            params: { text: formatRecordForEdit(record) }
+          }
+        }, "*");
+      }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
+    }
+  ` : '';
+
+  return `
+    // All records data from server
+    const allRecords = ${recordsJson};
+
+    ${RESIZE_OBSERVER_SCRIPT}
+
+    ${editFunctions}
+  `;
+}
+
+/**
+ * Records Table HTML (for viewing multiple records with edit)
+ */
+export function recordsTableHtml(records: UIRecord[], objectType: string): string {
+  if (records.length === 0) {
+    return generateEmptyStateHtml(`${objectType} Records`, "No records found.");
+  }
+
+  // Get all field names from all records
+  const allFields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record).forEach(field => allFields.add(field));
+  });
+
+  const fields = sortFields(Array.from(allFields));
+  const tableRows = records.map((record, index) => generateTableRow(record, fields, index, true)).join("\n");
+  const tableHeaders = [
+    '<th class="header-cell">Actions</th>',
+    ...fields.map(field => `<th class="header-cell">${esc(field)}</th>`)
+  ].join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Records – ${objectType}</title>
+  <style>
+    ${TABLE_STYLES}
+    ${TABLE_ACTION_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${objectType} Records</h1></div>
+      <div class="body">
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${generateTableScripts(records, true)}
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Read-Only Records Table HTML (for aggregate/analytical queries)
+ */
+export function readOnlyTableHtml(records: UIRecord[], title: string): string {
+  if (records.length === 0) {
+    return generateEmptyStateHtml(title, "No results found.");
+  }
+
+  // Get all field names from all records
+  const allFields = new Set<string>();
+  records.forEach(record => {
+    Object.keys(record).forEach(field => allFields.add(field));
+  });
+
+  const fields = sortFields(Array.from(allFields));
+  const tableRows = records.map((record) => generateTableRow(record, fields, 0, false)).join("\n");
+  const tableHeaders = fields.map(field => `<th class="header-cell">${esc(field)}</th>`).join("");
+
+  return `
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Results – ${title}</title>
+  <style>
+    ${TABLE_STYLES}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header"><h1>${title}</h1></div>
+      <div class="body">
+        <table>
+          <thead><tr>${tableHeaders}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    ${RESIZE_OBSERVER_SCRIPT}
+  </script>
+</body>
+</html>`;
+}
+
+/**
+ * Format field value with special formatting for different types
+ */
+function formatFieldValue(fieldName: string, fieldValue: string): string {
+  const displayValue = esc(fieldValue);
+
+  // Special formatting for different field types
+  const isWebsite = fieldName.toLowerCase().includes('website') && displayValue.startsWith('http');
+  const isEmail = fieldName.toLowerCase().includes('email') && displayValue.includes('@');
+  const isPhone = fieldName.toLowerCase().includes('phone');
+  const isId = fieldName.toLowerCase().includes('id') && /^[a-zA-Z0-9]{15,18}$/.test(displayValue);
+
+  if (isWebsite) {
+    return `<a href="${displayValue}" target="_blank" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isEmail) {
+    return `<a href="mailto:${displayValue}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isPhone) {
+    return `<a href="tel:${displayValue.replace(/[^\d+()-\s]/g, '')}" style="color:#10b981;text-decoration:underline;">${displayValue}</a>`;
+  } else if (isId) {
+    return `<code style="font-family:monospace;background:#f3f4f6;padding:2px 4px;border-radius:3px;font-size:13px;">${displayValue}</code>`;
+  }
+
+  return displayValue;
+}
+
+/**
+ * Generate section HTML for detail card
+ */
+function generateSectionHtml(section: RecordSection): string {
+  const fieldsHtml = Object.entries(section.fields)
+    .map(([fieldName, fieldValue]) => {
+      const formattedValue = formatFieldValue(fieldName, fieldValue);
+      return `
+        <div class="row">
+          <div class="label">${esc(fieldName)}</div>
+          <div class="value">${formattedValue}</div>
+        </div>`;
+    })
+    .join('');
+
+  return `
+    <div class="section">
+      <div class="section-header">${esc(section.header)}</div>
+      ${fieldsHtml}
+    </div>`;
+}
+
+/**
+ * Generate detail card scripts
+ */
+function generateDetailCardScripts(fullRecord: Record<string, string>): string {
+  const fullRecordJson = safeJsonInject(fullRecord);
+
+  return `
+    // Full record data
+    const fullRecord = ${fullRecordJson};
+
+    ${RESIZE_OBSERVER_SCRIPT}
+
+    function editRecord() {
+      if (fullRecord) {
+        // Build prompt to open record in edit mode
+        const prompt = "Edit this " + (fullRecord.Name || "record") + " record.";
+
+        parent.postMessage({
+          type: "prompt",
+          payload: {
+            prompt,
+            params: { text: formatRecordForEdit(fullRecord) }
+          }
+        }, "*");
+      }
+    }
+
+    function formatRecordForEdit(record) {
+      let textContent = record.Name || "Record";
+
+      for (const [key, value] of Object.entries(record)) {
+        if (key !== "Name") {
+          textContent += "\\\\n* " + key + ": " + value;
+        }
+      }
+
+      return textContent;
+    }
+  `;
+}
+
+/**
+ * Record Detail Card HTML (Read-only)
+ */
+export function recordDetailCardHtml(recordName: string, sections: RecordSection[], fullRecord: Record<string, string>, description?: string): string {
+  // Generate sections HTML
+  const sectionsHtml = sections.map(section => generateSectionHtml(section)).join('');
+
+  // Description section if present
+  const descriptionHtml = description ? `
+    <div class="section">
+      <div class="section-header">Description</div>
+      <div class="description">${esc(description)}</div>
+    </div>` : '';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(recordName)}</title>
+  <style>
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI;background:#f9f9fb}
+    .wrap{max-width:720px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.07);overflow:hidden}
+    .header {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    .actions{padding:16px 20px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #eee}
+    .btn{padding:10px 16px;border:0;border-radius:999px;font-weight:500;cursor:pointer;font-size:14px}
+    .btn.primary{background:#111;color:#fff}
+    .title {
+      font-size: 24px;
+      font-weight: 600;
+      margin: 0 0 8px 0;
+      line-height: 1.2;
+    }
+    .section {
+      padding: 20px;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .section:last-child {
+      border-bottom: none;
+    }
+    .section-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .description {
+      font-size: 15px;
+      color: #4b5563;
+      line-height: 1.5;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+      gap: 16px;
+    }
+    .row:last-child {
+      margin-bottom: 0;
+    }
+    .label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      min-width: 100px;
+      flex-shrink: 0;
+    }
+    .value {
+      font-size: 15px;
+      color: #1f2937;
+      font-weight: 500;
+      flex: 1;
+      text-align: right;
+      word-break: break-word;
+    }
+    .progress {
+      height: 6px;
+      background: #e5e7eb;
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .fill {
+      height: 100%;
+      width: 70%;
+      background: #10b981;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+    <div class="header">
+      <h1 class="title">${esc(recordName)}</h1>
+    </div>
+    ${sectionsHtml}
+    ${descriptionHtml}
+    <div class="actions">
+      <button class="btn primary" onclick="editRecord()">Edit</button>
+    </div>
+    </div>
+  </div>
+  <script>
+    ${generateDetailCardScripts(fullRecord)}
+  </script>
+</body>
+</html>`;
+}
+
+/* ==============================================================
+   TOOL DEFINITIONS
+   ============================================================== */
+
 export const EDIT_SINGLE_RECORD: Tool = {
   name: "salesforce_edit_record",
   description: `Edit a single Salesforce record using an interactive UI form. Use this tool when you want to modify, update, or edit record data with a visual form interface.
@@ -292,21 +933,94 @@ Example usage: When a user wants to edit a contact's information, this tool open
     properties: {
       text: {
         type: "string",
-        description: "Text representation of the record to edit, formatted as: 'ObjectName\\n\\n* Field1: value1\\n* Field2: value2\\n...' with Name and Id as required fields"
+        description: "JSON string or text representation of the record to edit. If JSON, should be a valid object string. If text, formatted as: 'ObjectName\\n\\n* Field1: value1...'"
       }
     },
     required: ["text"]
   }
 };
 
-/* --------------------------------------------------------------
-   5. Handler Function (following MCP server pattern)
-   -------------------------------------------------------------- */
-export async function handleDisplaySingleRecord(conn: any, args: EditRecordArgs) {
+export const VIEW_RECORDS_TABLE: Tool = {
+  name: "salesforce_view_records_table",
+  description: `Display multiple Salesforce records in a table view with edit functionality. Use this tool when you want to view, browse, or select from a list of records with the ability to edit individual records by clicking on them.
+
+ACTIVATE THIS TOOL when users say things like:
+• "Show me all records"
+• "Show me top 5 open opportunities by amount"
+• "View [records] in a table/list"
+• "List all [records] with edit option"
+• "Display [records] for selection/editing"
+• "Browse records and edit selected ones"
+
+The tool provides an interactive table with:
+• All records displayed in rows and columns
+• Action button in the first column to edit each individual record
+
+• Consistent styling with edit forms
+• Smart field formatting (dates, percentages, etc.)
+• Responsive design for different screen sizes
+
+Example usage: When a user wants to see a list of contacts or accounts and be able to edit specific ones, this tool displays them in an interactive table where clicking the "Edit" button in the first column opens the edit form.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      records: {
+        type: "array",
+        items: {
+          type: "string"
+        },
+        description: "Array of JSON strings or text representations for records."
+      },
+      objectType: {
+        type: "string",
+        description: "The Salesforce object type (e.g., 'Account', 'Contact', 'Custom_Object__c') for display purposes"
+      }
+    },
+    required: ["records", "objectType"]
+  }
+};
+
+export const VIEW_RECORD_DETAIL: Tool = {
+  name: "salesforce_view_record_detail",
+  description: `Display a single Salesforce record in a detailed, read-only card format. Use this tool when you want to view comprehensive record information in an attractive, organized layout with sections and proper formatting.
+
+ACTIVATE THIS TOOL when users say things like:
+• "Show me the details of this record"
+• "Display [record] in detail/card format"
+• "View [record] information comprehensively"
+• "Show full record details"
+• "Display record in card view"
+
+The tool provides a beautifully formatted card with:
+• Record name prominently displayed in the header
+• Information organized into logical sections (e.g., Basic Information, Location & Contact, etc.)
+• Smart formatting for different field types (IDs, websites, emails, phone numbers)
+• Clean, modern card design with gradient header
+• Responsive layout
+• Hyperlinked clickable fields where appropriate
+
+Example usage: When a user wants to see detailed information about an account or contact with all fields properly organized and formatted.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "Text representation of the record details to display, formatted with: 'Record Name\\nSection Header:\\n* Field: value\\n* Field: value\\n...' with sections containing field information"
+      }
+    },
+    required: ["text"]
+  }
+};
+
+/* ==============================================================
+   HANDLER FUNCTIONS
+   ============================================================== */
+
+export async function handleEditSingleRecord(conn: any, args: EditRecordArgs) {
   const { text } = args;
 
   try {
-    let obj: Object;
+    let obj: UIRecord;
     obj = parseObjectText(text);
 
     const summary = Object.entries(obj)
@@ -319,7 +1033,7 @@ export async function handleDisplaySingleRecord(conn: any, args: EditRecordArgs)
       content: [
         { type: "text", text: summary },
         createUIResource({
-          uri: `ui://object/view/${encodeURIComponent(objId)}`,
+          uri: `ui://record/edit/${encodeURIComponent(objId)}`,
           content: { type: "rawHtml", htmlString: objectCardHtml(obj) },
           encoding: "text",
         }),
@@ -335,4 +1049,150 @@ export async function handleDisplaySingleRecord(conn: any, args: EditRecordArgs)
       isError: true,
     };
   }
+}
+
+export async function handleDisplayRecordsTable(conn: any, args: { records: string[], objectType: string }) {
+  const { records, objectType } = args;
+
+  try {
+    // Parse each record text into objects
+    const parsedRecords: UIRecord[] = records.map(text => parseObjectText(text));
+
+    const summary = `Found ${parsedRecords.length} ${objectType} record${parsedRecords.length === 1 ? '' : 's'}`;
+
+    const recordsId = parsedRecords.length > 0 ? parsedRecords[0]["Id"] : "table";
+
+    return {
+      content: [
+        { type: "text", text: summary },
+        createUIResource({
+          uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+          content: { type: "rawHtml", htmlString: recordsTableHtml(parsedRecords, objectType) },
+          encoding: "text",
+        }),
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{
+        type: "text",
+        text: `Error parsing records: ${errorMessage}\n\nExpected format: JSON string or text format`
+      }],
+      isError: true,
+    };
+  }
+}
+
+export async function handleViewRecordDetail(conn: any, args: ViewRecordDetailArgs) {
+  const { text } = args;
+
+  try {
+    const { recordName, sections, description } = parseRecordDetailText(text);
+
+    const summary = `Displaying detailed view for: ${recordName}`;
+
+    // Construct full record object from sections
+    const fullRecord: Record<string, string> = { Name: recordName };
+    for (const section of sections) {
+      Object.assign(fullRecord, section.fields);
+    }
+
+    // Use actual Salesforce ID if available (case-sensitive), otherwise sanitize recordName
+    const recordId = fullRecord.Id || recordName.replace(/[^a-zA-Z0-9]/g, '_');
+
+    return {
+      content: [
+        { type: "text", text: summary },
+        createUIResource({
+          uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
+          content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, fullRecord, description) },
+          encoding: "text",
+        }),
+      ],
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{
+        type: "text",
+        text: `Error parsing record detail text: ${errorMessage}\n\nExpected format:\n\`\`\`\nRecord Name (additional notes)\nSection Header: (additional notes)\n* Field Name: field value\n* Another Field: another value\nAnother Section:\n* Field: value\nDescription text (optional)\n\`\`\``
+      }],
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Converts Salesforce query result records to UIRecord format and generates
+ * appropriate UI resources (detail card for single record, table for multiple).
+ * 
+ * @param records - Raw Salesforce records from query result
+ * @param objectName - The Salesforce object type (e.g., 'Account', 'Contact')
+ * @param readOnly - If true, generates a read-only table without edit buttons (for aggregate queries)
+ * @returns Array of content items including JSON data and UI resources
+ */
+export function convertRecordsToUI(records: any[], objectName: string, readOnly: boolean = false): any[] {
+  // Convert records to UIRecord format (string values)
+  const uiRecords: UIRecord[] = records.map((r: any) => {
+    const rec: UIRecord = {};
+    for (const [k, v] of Object.entries(r)) {
+      if (k === 'attributes') continue;
+      if (v === null || v === undefined) {
+        rec[k] = '';
+      } else if (typeof v === 'object') {
+        // If it has a Name, use it (common for parent relationships)
+        if ('Name' in (v as any)) {
+          rec[k] = (v as any).Name;
+        } else {
+          rec[k] = JSON.stringify(v);
+        }
+      } else {
+        rec[k] = String(v);
+      }
+    }
+    return rec;
+  });
+
+  const recordCount = uiRecords.length;
+  const content: any[] = [{ type: "text", text: JSON.stringify(records, null, 2) }];
+
+  if (recordCount === 1 && !readOnly) {
+    const record = uiRecords[0];
+    const recordName = record.Name || record.Id || "Record";
+    const recordId = record.Id || "unknown";
+
+    const sections: RecordSection[] = [{
+      header: "Details",
+      fields: record
+    }];
+
+    content.push(createUIResource({
+      uri: `ui://record/detail/${encodeURIComponent(recordId)}`,
+      content: { type: "rawHtml", htmlString: recordDetailCardHtml(recordName, sections, record) },
+      encoding: "text",
+    }));
+  } else if (recordCount > 1 || (recordCount === 1 && readOnly)) {
+    const objectType = objectName;
+    const recordsId = uiRecords[0]?.Id || "table";
+
+    if (readOnly) {
+      // Use read-only table for aggregate queries
+      const queryTitle = `${objectName} Results`;
+      content.push(createUIResource({
+        uri: `ui://records/readonly/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+        content: { type: "rawHtml", htmlString: readOnlyTableHtml(uiRecords, queryTitle) },
+        encoding: "text",
+      }));
+    } else {
+      // Use editable table for regular queries
+      content.push(createUIResource({
+        uri: `ui://records/view/${encodeURIComponent(objectType)}/${encodeURIComponent(recordsId)}`,
+        content: { type: "rawHtml", htmlString: recordsTableHtml(uiRecords, objectType) },
+        encoding: "text",
+      }));
+    }
+  }
+
+  return content;
 }
