@@ -9,13 +9,13 @@ import {
 import * as dotenv from "dotenv";
 
 import { createSalesforceConnection } from "./utils/connection.js";
-import { SEARCH_OBJECTS, handleSearchObjects } from "./tools/search.js";
+
 import { DESCRIBE_OBJECT, handleDescribeObject } from "./tools/describe.js";
 import { QUERY_RECORDS, handleQueryRecords, QueryArgs } from "./tools/query.js";
 import { AGGREGATE_QUERY, handleAggregateQuery, AggregateQueryArgs } from "./tools/aggregateQuery.js";
 import { DML_RECORDS, handleDMLRecords, DMLArgs } from "./tools/dml.js";
 
-import { SEARCH_ALL, handleSearchAll, SearchAllArgs, WithClause } from "./tools/searchAll.js";
+
 import { EDIT_SINGLE_RECORD, handleEditSingleRecord, EditRecordArgs, VIEW_RECORDS_TABLE, handleDisplayRecordsTable, VIEW_RECORD_DETAIL, handleViewRecordDetail, ViewRecordDetailArgs } from "./tools/ui.js";
 
 // Load environment variables (using dotenv 16.x which has no stdout tips)
@@ -37,13 +37,13 @@ const server = new Server(
 // Tool handlers
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    SEARCH_OBJECTS,
+
     DESCRIBE_OBJECT,
     QUERY_RECORDS,
     AGGREGATE_QUERY,
     DML_RECORDS,
 
-    SEARCH_ALL,
+
     EDIT_SINGLE_RECORD,
     VIEW_RECORDS_TABLE,
     VIEW_RECORD_DETAIL
@@ -58,11 +58,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const conn = await createSalesforceConnection();
 
     switch (name) {
-      case "salesforce_search_objects": {
-        const { searchPattern } = args as { searchPattern: string };
-        if (!searchPattern) throw new Error('searchPattern is required');
-        return await handleSearchObjects(conn, searchPattern);
-      }
+
 
       case "salesforce_describe_object": {
         const { objectName } = args as { objectName: string };
@@ -120,36 +116,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 
 
-      case "salesforce_search_all": {
-        const searchArgs = args as Record<string, unknown>;
-        if (!searchArgs.searchTerm || !Array.isArray(searchArgs.objects)) {
-          throw new Error('searchTerm and objects array are required for search');
-        }
 
-        // Validate objects array
-        const objects = searchArgs.objects as Array<Record<string, unknown>>;
-        if (!objects.every(obj => obj.name && Array.isArray(obj.fields))) {
-          throw new Error('Each object must specify name and fields array');
-        }
-
-        // Type check and conversion
-        const validatedArgs: SearchAllArgs = {
-          searchTerm: searchArgs.searchTerm as string,
-          searchIn: searchArgs.searchIn as "ALL FIELDS" | "NAME FIELDS" | "EMAIL FIELDS" | "PHONE FIELDS" | "SIDEBAR FIELDS" | undefined,
-          objects: objects.map(obj => ({
-            name: obj.name as string,
-            fields: obj.fields as string[],
-            where: obj.where as string | undefined,
-            orderBy: obj.orderBy as string | undefined,
-            limit: obj.limit as number | undefined
-          })),
-          withClauses: searchArgs.withClauses as WithClause[] | undefined,
-          updateable: searchArgs.updateable as boolean | undefined,
-          viewable: searchArgs.viewable as boolean | undefined
-        };
-
-        return await handleSearchAll(conn, validatedArgs);
-      }
 
       case "salesforce_edit_record": {
         const editArgs = args as Record<string, unknown>;
